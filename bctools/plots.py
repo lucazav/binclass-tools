@@ -1,0 +1,778 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+import numpy as np
+import pandas as pd
+
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from .utilities import _get_amount_matrix, _get_cost_matrix
+from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df
+
+from .thresholds import get_optimized_thresholds_df
+
+def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01, 
+                          amounts = None, cost_dict = None, optimize_threshold = None, 
+                          N_subsets = 70, subsets_size = 0.2, with_replacement = False,
+                          currency = '€', random_state = None, title = 'Interactive Confusion Matrix'):
+    
+    """ 
+    Plots interactive and customized confusion matrix with plotly, 
+    one for each threshold that can be selected with a slider, 
+    displaying additional information (metrics, optimized thresholds). 
+    
+    Returns three dataframes containing: 
+    - metrics that depend on threshold 
+    - metrics that don't depend on threshold,
+    - optimized thresholds (or empty)
+    
+    Plot is constituted by: 
+    - table displaying metrics that vary based on the threshold selected:
+      Accuracy, Balanced Acc., F1, Precision, Recall, MCC, Cohen's K
+    - table displaying metrics that don't depend on threshold:
+      ROC auc, Pecision-Recall auc, Brier score 
+    - when optimize_threshold is given:
+      table displayng thresholds optimized using GHOST method for any of the following metrics:
+      Kohen's Kappa, Matthew's Correlation Coefficient, ROC, F-beta scores (beta = 1, 0.5, 2) 
+      and for minimal total cost
+    - confusion matrix (annotated heatmap) that varies based on the threshold selected
+      displayng for each class (based on given inputs): count and percentage on total, amount and percentage on total, cost 
+    - slider that allows to select the threshold 
+
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    threshold_step: float, default=0.01
+        step between each classification threshold (ranging from 0 to 1) below which prediction label is 0, 1 otherwise
+        each value will have a corresponding slider step
+    amounts: sequence of floats, default=None
+        amounts associated to each element of data 
+        (e.g. fraud detection for online orders: amounts could be the orders' amounts)
+    cost_dict: dict, deafult=None
+        dict containing costs associated to each class (TN, FP, FN, TP)
+        with keys "TN", "FP", "FN", "TP" 
+        and values that can be both lists (with coherent lenghts) and/or floats  
+        (output from get_cost_dict)
+        necessary when optimizing threshold for minimal total costs
+    optimize_threshold: {'all', 'ROC', 'MCC', 'Kappa', 'Fscore', 'Cost'} 
+                        or list containing allowed values except 'all',  default=None
+        metrics for which thresholds will be optimized 
+        'all' is equvalent to ['ROC', 'MCC', 'Kappa', 'Fscore'] if cost_dict=None, ['ROC', 'MCC', 'Kappa', 'Fscore', 'Cost'] otherwise
+    N_subsets: int, default=70
+        Number of subsets used in GHOST optimization process
+    subsets_size: float or int, default=0.2
+        Size of the subsets used in GHOST optimization process. 
+        If float, represents the proportion of the dataset to include in the subsets. 
+        If integer, it represents the actual number of instances to include in the subsets. 
+    with_replacement: bool, default=False
+        If True, the subsets used in GHOST optimization process are drawn randomly with replacement, without otherwise.            
+    currency: str, default='€'
+        currency symbol to be visualized. For unusual currencies, you can use their HTML code representation
+        (eg. Indian rupee: '&#8377;')
+    random_state: int, default=None
+        Controls the randomness of the bootstrapping of the samples when optimizing thresholds with GHOST method
+    title: str, default='Interactive Confusion Matrix'
+        The main title of the plot.
+    
+    """
+    if currency == '$': #correct dollar symbol for plotly in its HTML code
+        currency = '&#36;'
+    
+    try:
+        n_of_decimals = len(str(threshold_step).rsplit('.')[1])
+    except:
+        n_of_decimals = 4
+        
+    threshold_values = list(np.arange(0, 1 + threshold_step, threshold_step)) #define thresholds array  
+    n_data = len(true_y)
+    main_title = f"<b>{title}</b><br>"
+    subtitle = "Total obs: " + '{:,}'.format(n_data)
+    
+    if amounts is not None:     
+        amounts = list(amounts)
+        tot_amount = sum(amounts)
+        subtitle += "<br>Total amount: " + currency + '{:,.2f}'.format(tot_amount)
+    
+    # initialize annotation matrix 
+    annotations_fixed = np.array([[["TN", "True Negative"], ["FP", "False Positive"]],     
+                                  [["FN", "False Negative"], ["TP", "True Positive"]]])
+    
+    # initialize figure
+    fig = make_subplots(rows=2, cols=3,
+                        specs=[[{"type": "table"}, {"type": "table"}, {"type": "table"}],
+                               [{"type": "heatmap", "colspan" : 3}, None, None]],
+                        vertical_spacing=0.0,
+                        horizontal_spacing = 0.01)
+    
+    # compute invariant metrics and create table with invariant metrics:
+    constant_metrics_df = get_invariant_metrics_df(true_y, predicted_proba)
+    fig.add_trace(
+            go.Table(header=dict(values=['Invariant Metric', 'Value']),
+                     cells=dict(values=[constant_metrics_df['invariant_metric'], constant_metrics_df['value']])
+                    ), row=1, col=2)
+    
+    # create table with optimized thresholds or empty:
+    if optimize_threshold is not None:
+        
+        # compute optimized thresholds and create dataframe
+        optimal_thresholds_df = get_optimized_thresholds_df(optimize_threshold, threshold_values[1:-1], true_y, predicted_proba, 
+                                                            cost_dict, random_state)
+        fig.add_trace(
+                go.Table(header=dict(values=['Optimized Metric', 'Optimal Threshold']),
+                         cells=dict(values=[optimal_thresholds_df['optimized_metric'], optimal_thresholds_df['optimal_threshold']])
+                        ), row=1, col=3)
+    else:
+        optimal_thresholds_df = None # needed for return statement
+        fig.add_trace(go.Table({}), row=1, col=3) 
+        
+    # create dynamic titles dictionary (will be empty if cost is not given)
+    titles = {}
+
+    # initialize dataframe to store metrics dependent on threshold
+    metrics_dep_on_threshold_df = pd.DataFrame() 
+    
+    for threshold in threshold_values:
+        
+        titles[threshold] = '' #set empty title
+        
+        # get confusion matrix and metrics dep. on threshold
+        matrix, temp_metrics_df = get_confusion_matrix_and_metrics_df(true_y, predicted_proba, 
+                                                                      threshold = threshold, normalize = None)
+        # concat to metrics_dep_on_threshold_df
+        temp_metrics_df['threshold'] = threshold
+        metrics_dep_on_threshold_df = pd.concat([metrics_dep_on_threshold_df, temp_metrics_df])
+        
+        annotations = np.dstack((annotations_fixed, matrix/n_data)) # add count percentage to annotations matrix 
+        
+        # define dynamic annotations and hover text  
+        template = "%{z} (%{text[2]:.2~%})"       # total count and perc.           
+
+        if amounts or cost_dict:
+            annotations_max_index = 2
+        
+            if amounts:
+                amount_matrix = _get_amount_matrix(true_y, predicted_proba, threshold, amounts)
+                annotations = np.dstack((annotations, amount_matrix, amount_matrix/tot_amount)) # add amount matrix and perc. matrix
+                annotations_max_index += 2
+                #add to template "Amount:" total and perc.
+                template +=  "<br>Amount: "+ currency + "%{text[3]:~s} (%{text[4]:.2~%})"       
+
+            if cost_dict:
+                cost_matrix = _get_cost_matrix(true_y, predicted_proba, threshold, cost_dict)
+                total_cost = cost_matrix.sum()
+                annotations = np.dstack((annotations, cost_matrix, cost_matrix/total_cost))     # add cost matrix and perc. matrix
+                annotations_max_index += 2
+                #add to template "Cost:" total and perc.
+                template += "<br>Cost: "+ currency +\
+                            "%{text[" + str(annotations_max_index-1) +  "]:~s} (%{text[" +str(annotations_max_index)+  "]:.2~%})"                 
+                # update title adding total cost
+                titles[threshold] += "<br>Total cost: " + currency + '{:,.2f}'.format(cost_matrix.sum())
+            
+        # invert rows (for plotly.go plots compatibility)
+        matrix[[0, 1]] = matrix[[1, 0]] 
+        annotations[[0, 1]] = annotations[[1, 0]]
+        
+        # table with metrics that depend on threshold        
+        fig.add_trace(
+            go.Table(header=dict(values=['Variable Metric', 'Value']),
+                     cells=dict(values=[temp_metrics_df[k].tolist() for k in temp_metrics_df.columns[:-1]]),
+                     visible=False
+                    ),
+            row=1, col=1)
+        
+        # annotated confusion matrix
+        fig.add_trace(go.Heatmap(z = matrix,
+                               text = annotations,
+                               texttemplate= "<b>%{text[0]}</b><br>" + template,
+                               name="threshold: " + str(round(threshold, n_of_decimals)),
+                               hovertemplate = "<b>%{text[1]}</b><br>Count: " + template,
+                               x=['False', 'True'],
+                               y=['True', 'False'],
+                               colorscale = 'Blues',
+                               showscale = False,
+                               visible=False), row=2, col=1)  
+    
+    # pivot metrics_dep_on_threshold_df 
+    name_col = metrics_dep_on_threshold_df.columns[0]
+    value_col = metrics_dep_on_threshold_df.columns[1]
+    metrics_dep_on_threshold_df = metrics_dep_on_threshold_df.pivot(columns = name_col, values = value_col, index = 'threshold').reset_index('threshold').rename_axis(None, axis=1)    
+    
+    # fig.data[0] is the constant metrcis table, fig.data[1] is the optimal threshold table, always visible
+    fig.data[2].visible = True   # first variable metrics table
+    fig.data[3].visible = True   # first confusion matrix
+    
+    # create and add slider
+    steps = []
+    j = 2   # skip first and second trace (invariant metric table, opt. thresholds/empty table)
+    
+    for threshold in threshold_values:
+        step = dict(method="update",
+                    args=[{"visible": [False] * len(fig.data)},
+                          {"title": dict(text = main_title + '<span style="font-size: 13px;">' \
+                                              + subtitle + titles[threshold] + '</span>', 
+                                         y = 0.965, yanchor = 'bottom')}
+                         ],
+                    label = str(round(threshold, n_of_decimals))
+                   )
+        
+        step["args"][0]["visible"][0] = True    # constant metric table always visible
+        step["args"][0]["visible"][1] = True    # opt. thresholds/empty table always visible
+        step["args"][0]["visible"][j] = True    # threshold related confusion matrix 
+        step["args"][0]["visible"][j+1] = True  # threshold related variable metrics table
+        steps.append(step)
+        j += 2                                  # add 2 to trace index (confusion matrix and variable metrics table)
+        
+    sliders = [dict(active=0,
+                    currentvalue={"prefix": "Threshold: "},
+                    pad=dict(t= 50),
+                    steps=steps)]
+
+    fig.update_layout(height=600,
+                      sliders=sliders, 
+                      title = dict(text = main_title + '<span style="font-size: 13px;">' \
+                                          + subtitle + titles[threshold_values[0]] + '</span>', 
+                                   y = 0.965, yanchor = 'bottom')) #first visible title
+    
+    fig.update_xaxes(title_text = "Predicted")
+    fig.update_yaxes(title_text = "Actual")
+    fig.show()
+    
+    return metrics_dep_on_threshold_df, constant_metrics_df, optimal_thresholds_df
+
+def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01, 
+                             amounts = None, cost_dict = None, currency = '€',
+                             title = 'Interactive Confusion Line Chart'):
+    
+    """
+    - Plots interactive and customized line-plots with plotly, one for each "confusion class" (TN, FP, FN, TP), 
+      displayng amount and/or cost againts thresholds and additional information (intersection points, total cost)    
+    - Returns a dataframe containing, for every threshold and depending on the inputs, 
+      the amount and cost associated to each class (TN, FP, FN, TP) and the total cost
+    - Returns the value of the total amount
+
+    Plot is constituted by: 
+    - four linecharts, one for each class (TN, FP, FN, TP), with thresholds on x axis 
+      and amounts and/or costs (depends on the given input) on y axis 
+    - slider that moves markers in linecharts based on threshold selected
+
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    threshold_step: float, default=0.01
+        step between each classification threshold (ranging from 0 to 1) below which prediction label is 0, 1 otherwise
+        each value will have a corresponding slider step
+    amounts: sequence of floats, default=None
+        amounts associated to each element of data 
+        (e.g. fraud detection for online orders: amounts could be the orders' amounts)
+    cost_dict: dict, deafult=None
+        dict containing costs associated to each class (TN, FP, FN, TP)
+        with keys "TN", "FP", "FN", "TP" 
+        and values that can be both lists (with coherent lenghts) and/or floats  
+        (output from get_cost_dict)
+    currency: str, default='€'
+        currency symbol to be visualized. For unusual currencies, you can use their HTML code representation
+        (eg. Indian rupee: '&#8377;')
+    title: str, default='Interactive Confusion Line Chart'
+        The main title of the plot.
+        
+    Returns
+    ----------   
+    amount_cost_df: pandas dataframe
+        Dataframe containing variables: 
+        - threshold
+        - if amounts is given: amounts relative to each class (TN, FP, FN, TP) 
+        - if cost_dict is given: cost relative to each class (TN, FP, FN, TP) and total cost
+        
+    total_amounts: float
+        sum of the amounts (or None if amounts is None)
+    """
+    
+    if currency == '$':
+        currency = '&#36;'
+    
+    try:
+        n_of_decimals = len(str(threshold_step).rsplit('.')[1])
+    except:
+        n_of_decimals = 4
+        
+    threshold_values = list(np.arange(0, 1 + threshold_step, threshold_step))
+    middle_x = (threshold_values[0] + threshold_values[-1])/2  
+    n_data = len(true_y)
+    main_title = f"<b>{title}</b><br>"
+    subtitle = "Total obs: " + '{:,}'.format(n_data)
+    
+    if amounts is not None:
+        amounts = list(amounts)
+        tot_amount = sum(amounts)
+        subtitle += "<br>Total amount: " + currency + '{:,.2f}'.format(tot_amount)
+        
+    # Create labels for titles
+    label_lst = ["True Negative", "False Positive", "False Negative", "True Positive"]
+
+    # get threshold-amount-cost dataframe (throws error if both cost_dict and amounts are None)
+    amount_cost_df = get_amount_cost_df(true_y, predicted_proba, threshold_values, amounts, cost_dict)
+    
+    # Create figure
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles = label_lst,
+        shared_xaxes = True,
+        vertical_spacing=0.16,
+        specs=[[{"type": "scatter"}, {"type": "scatter"}],
+               [{"type": "scatter"}, {"type": "scatter"}]]
+    )
+    
+    for annotation in fig['layout']['annotations']: 
+        annotation['y'] = annotation['y'] + 0.04  #move subplots title up 
+    
+    middle_y_lst = []
+
+    if (amounts is not None) and (cost_dict is not None):
+        static_charts_num = 12
+        markers_num = 8
+        unit_y_lst = []
+        
+        titles = {threshold: "<br>Total cost: " + currency \
+                                 + '{:,.2f}'.format(value) for threshold, value in zip(threshold_values, 
+                                                                                       list(amount_cost_df['total_cost']))}
+    
+        # Create amounts and cost line charts       
+        for confusion_index, row_index, col_index, color1, color2 in zip(['TN', 'FP', 'FN', 'TP'],
+                                                                         [1, 1, 2, 2],
+                                                                         [1, 2, 1, 2],
+                                                                         ['blue', 'red', '#00CC96', '#AB63FA'],
+                                                                         ['rgb(128, 177, 211)', 'rgb(251, 128, 114)', 
+                                                                          'rgb(141, 211, 199)', 'rgb(190, 186, 218)']):
+            fig.add_trace(
+                go.Scatter(x = amount_cost_df['threshold'],
+                           y = amount_cost_df['amount_' + confusion_index],
+                           showlegend = False,
+                           mode="lines",
+                           line=dict(color=color1),
+                           hovertemplate = "amount: " + currency + "%{y}<extra></extra>"),
+                row=row_index, col=col_index)
+            
+            fig.add_trace(
+                go.Scatter(x = amount_cost_df['threshold'],
+                           y = amount_cost_df['cost_' + confusion_index],
+                           showlegend = False,
+                           mode="lines",
+                           line=dict(color=color2),
+                           hovertemplate = "cost: " + currency + "%{y}<extra></extra>"),
+                row=row_index, col=col_index)
+            
+            # Save middle points
+            middle_y_lst.append((max(fig.data[-2]['y'] + fig.data[-1]['y']) + min(fig.data[-2]['y'] + fig.data[-1]['y']))/2)
+            unit_y_lst.append((middle_y_lst[-1] - min(fig.data[-2]['y'] + fig.data[-1]['y']))/4)
+                
+            x_intersect = []
+            y_intersect = []
+            diff_cost_amount = list(amount_cost_df['amount_' + confusion_index] - amount_cost_df['cost_' + confusion_index])
+
+            for i in range(len(diff_cost_amount)-1):
+                if (diff_cost_amount[i] < 0) & (diff_cost_amount[i+1]>=0):
+                    x_intersect.append(amount_cost_df.iloc[i+1]['threshold'])
+                    y_intersect.append(amount_cost_df.iloc[i+1]['cost_' + confusion_index])
+
+                elif (diff_cost_amount[i] > 0) & (diff_cost_amount[i+1]<=0):
+                    x_intersect.append(amount_cost_df.iloc[i+1]['threshold'])
+                    y_intersect.append(amount_cost_df.iloc[i+1]['cost_' + confusion_index])
+
+            fig.add_trace(
+                go.Scatter(x=x_intersect, 
+                           y=y_intersect, 
+                           showlegend = False,
+                           mode = "markers",
+                           marker_symbol = 'diamond', 
+                           marker_size = 8,
+                           marker=dict(color='black'),
+                           hovertemplate = "%{x}<extra></extra>",
+                          ),
+                row = row_index, col = col_index)
+            
+            if x_intersect:
+                intercepts_str = 'Swaps: '
+                intercepts_str += ", ".join(str(round(x, n_of_decimals)) for x in x_intersect)
+                fig.add_annotation(xref="x domain",yref="y domain",x=0.5, y=1.15, showarrow=False, 
+                                   text=intercepts_str, row=row_index, col=col_index)
+        
+        # Create indicator markers
+        for threshold in threshold_values:
+            amount_cost_row = amount_cost_df.loc[amount_cost_df['threshold'] == threshold]
+            
+            if threshold > middle_x:
+                left_or_right = ' left'
+            else:
+                left_or_right = ' right'
+                
+            for confusion_index, row_index, col_index, middle_y, \
+                unit_y, color1, color2 in zip(['TN', 'FP', 'FN', 'TP'], 
+                                               [1, 1, 2, 2], 
+                                               [1, 2, 1, 2],
+                                               middle_y_lst, 
+                                               unit_y_lst, 
+                                               ['blue', 'red','#00CC96', '#AB63FA'],
+                                               ['rgb(128, 177, 211)', 'rgb(251, 128, 114)', 'rgb(141, 211, 199)', 'rgb(190, 186, 218)']):
+
+                y_point_amount, y_point_cost = float(amount_cost_row['amount_' + confusion_index]), float(amount_cost_row['cost_' + confusion_index])     
+
+                if abs(y_point_amount - y_point_cost) < unit_y:
+
+                    if y_point_amount > y_point_cost:
+                        textposition_cost = 'bottom' + left_or_right
+                        textposition_amount = 'top' + left_or_right
+
+                    else:
+                        textposition_cost = 'top' + left_or_right
+                        textposition_amount = 'bottom' + left_or_right
+
+                else:
+
+                    if y_point_cost < middle_y:
+                        textposition_cost = 'top' + left_or_right
+                    else:
+                        textposition_cost = 'bottom' + left_or_right
+
+                    if y_point_amount < middle_y:
+                        textposition_amount = 'top' + left_or_right
+                    else:
+                        textposition_amount = 'bottom' + left_or_right
+
+                fig.add_trace(
+                    go.Scatter(x = [threshold], 
+                               y = [y_point_amount], 
+                               showlegend = False,
+                               mode = 'markers+text',
+                               texttemplate = "amount: " + currency + "%{y}",
+                               textposition = [textposition_amount],
+                               hovertemplate = currency +'%{y}',
+                               name = str(threshold),
+                               marker = dict(color=color1),
+                               marker_size = 8,
+                               visible=False),
+                    row = row_index, col = col_index)
+                
+                fig.add_trace(
+                    go.Scatter(x = [threshold], 
+                               y = [y_point_cost], 
+                               showlegend = False,
+                               mode = 'markers+text',
+                               texttemplate = "cost: " + currency + "%{y}",
+                               textposition = [textposition_cost],
+                               hovertemplate = currency +'%{y}',
+                               name = str(threshold),
+                               marker = dict(color=color2),
+                               marker_size = 8,
+                               visible=False),
+                    row = row_index, col = col_index)
+                
+    else:
+        static_charts_num = 4
+        markers_num = 4
+        if amounts is not None:
+            var_to_plot = 'amount'
+            titles = {threshold: '' for threshold in threshold_values} # set empty titles dict
+        else:
+            tot_amount = None
+            var_to_plot = 'cost'
+            titles = {threshold: "<br>Total cost: " + currency \
+                                 + '{:,.2f}'.format(value) for threshold, value in zip(threshold_values, 
+                                                                                       list(amount_cost_df['total_cost']))}
+        
+        for confusion_index, row_index, col_index, color in zip([var_to_plot + '_TN', var_to_plot + '_FP',
+                                                                 var_to_plot + '_FN', var_to_plot + '_TP'],
+                                                                [1, 1, 2, 2],
+                                                                [1, 2, 1, 2],
+                                                                ['blue', 'red', 
+                                                                 '#00CC96', '#AB63FA']): 
+            fig.add_trace(
+                go.Scatter(x = amount_cost_df['threshold'],
+                           y = amount_cost_df[confusion_index],
+                           showlegend = False,
+                           mode="lines",
+                           line=dict(color=color),
+                           hovertemplate = var_to_plot + ": " + currency + "%{y}<extra></extra>"),
+                row=row_index, col=col_index)
+            
+        for i in range(4):
+            middle_y_lst.append((max(fig.data[i]['y']) + min(fig.data[i]['y']))/2)
+        
+        # Create indicator markers
+        for threshold in threshold_values:
+            
+            if threshold > middle_x:
+                left_or_right = ' left'
+            else:
+                left_or_right = ' right'
+                
+            amount_cost_row = amount_cost_df.loc[amount_cost_df['threshold'] == threshold]     
+            
+            for confusion_index, row_index, col_index, middle_y, color in zip([var_to_plot + '_TN', var_to_plot + '_FP',
+                                                                               var_to_plot + '_FN', var_to_plot + '_TP'],
+                                                                              [1, 1, 2, 2],
+                                                                              [1, 2, 1, 2],
+                                                                              middle_y_lst,
+                                                                              ['blue', 'red', '#00CC96', '#AB63FA']):            
+
+                y_point = float(amount_cost_row[confusion_index])
+                
+                if y_point < middle_y:
+                    textposition = 'top' + left_or_right
+                else:
+                    textposition = 'bottom' + left_or_right
+                    
+                fig.add_trace(
+                    go.Scatter(x = [threshold], 
+                               y = [y_point], 
+                               showlegend = False,
+                               mode = 'markers+text',
+                               texttemplate = var_to_plot + ": " + currency + "%{y}",
+                               textposition = textposition,
+                               hovertemplate = currency +'%{y}',
+                               name = str(threshold),
+                               marker=dict(color=color),
+                               marker_size = 8,
+                               visible=False),
+                row = row_index, col = col_index)
+
+    # if both amounts and cost are given, static_charts_num = 12  
+    # (4 linecharts for amount, 4 for cost, 4 for intercepts) from fig.data[0] to fig.data[11]
+    # if either amounts or cost is not given, static_charts_num = 4 
+    # there are just 4 linecharts from fig.data[0] to fig.data[3]
+    # line charts are always visible
+    
+    # make visible also the first line-chart markers to visualize (associated with the first threshold)
+    for i in range(markers_num):
+        fig.data[static_charts_num + i].visible = True 
+
+    steps = []
+    j = static_charts_num 
+    
+    for threshold in threshold_values:
+        step = dict(
+            method="update",
+            args=[{"visible": [False] * len(fig.data)},
+                  {"title": dict(text = main_title + '<span style="font-size: 13px;">' \
+                                          + subtitle + titles[threshold] + '</span>',
+                                 y = 0.965, yanchor = 'bottom')}
+                 ],
+            label = str(round(threshold, n_of_decimals))
+        )
+        step["args"][0]["visible"][:static_charts_num] = [True]*static_charts_num   # line charts 
+        step["args"][0]["visible"][j:j+markers_num] = [True]*markers_num            # line chart markers 
+            
+        j += markers_num
+        steps.append(step)
+
+    sliders = [dict(
+        active=0,
+        currentvalue={"prefix": "Threshold: "},
+        steps=steps,
+        pad=dict(t = 50))]
+
+    fig.update_layout(sliders=sliders, 
+                      title = dict(text = main_title + '<span style="font-size: 13px;">' \
+                                          + subtitle + titles[threshold_values[0]] + '</span>', 
+                                   y = 0.965, yanchor = 'bottom'), #first visible title
+                      margin={'t': 125},
+                     )
+    
+    fig.update_layout(height=600, hovermode="x")
+
+    # Update xaxis properties
+    fig.update_xaxes(title_text="Threshold", title_font_size=12, row=2, col=1)
+    fig.update_xaxes(title_text="Threshold", title_font_size=12, row=2, col=2)
+    
+    # Update yaxis properties
+    fig.update_yaxes(title_text="Amount/Cost", title_font_size=12, row=1, col=1)
+    fig.update_yaxes(title_text="Amount/Cost", title_font_size=12, row=2, col=1)
+
+    fig.show()
+    
+    return amount_cost_df, round(tot_amount, 2)
+
+def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
+                           amounts = None, cost_dict = None,
+                           amount_classes = 'all', cost_classes = 'all', currency = '€',
+                           title = 'Interactive Amount-Cost Line Chart'):
+    
+    """
+    - Plots an interactive and customized line-plot with plotly, 
+      displayng total amount and/or total cost for user-selected "confusion classes" (TN, FP, FN, TP) againts thresholds.     
+    - Returns a dataframe containing, for every threshold and depending on the inputs, 
+      the amount and cost associated to each class (TN, FP, FN, TP) and the total cost
+    - Returns the value of the total amount    
+    
+    Plot is constituted by one linechart with thresholds on x axis 
+    and total amounts and/or total costs (depends on the given input) on y axis 
+
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    threshold_step: float, default=0.01
+        step between each classification threshold (ranging from 0 to 1) below which prediction label is 0, 1 otherwise
+    amounts: sequence of floats, default=None
+        amounts associated to each element of data 
+        (e.g. fraud detection for online orders: amounts could be the orders' amounts)
+    cost_dict: dict, deafult=None
+        dict containing costs associated to each class (TN, FP, FN, TP)
+        with keys "TN", "FP", "FN", "TP" 
+        and values that can be both lists (with coherent lenghts) and/or floats  
+        (output from get_cost_dict)
+    amount_classes: {'all', 'TN', 'FP', 'FN', 'TP'} 
+                    or list containing allowed values except 'all'
+        the amount plotted is the sum of the amounts associated to data points belonging to the selected amount_classes   
+    cost_classes: {'all', 'TN', 'FP', 'FN', 'TP'} 
+                  or list containing allowed values except 'all'
+        the total cost plotted is the sum of the costs associated to data points belonging to the selected cost_classes        
+    currency: str, default='€'
+        currency symbol to be visualized. For unusual currencies, you can use their HTML code representation
+        (eg. Indian rupee: '&#8377;')
+    title: str, default='Interactive Amount-Cost Line Chart'
+        The main title of the plot.
+
+    Returns
+    ----------   
+    amount_cost_df: pandas dataframe
+        Dataframe containing variables: 
+        - threshold
+        - if amounts/amount_classes are given: amounts relative to the user-selected classes and sum 
+        - if cost_dict/cost_classes are given: cost relative to the user-selected classes and sum
+
+    """
+    
+    if currency == '$':
+        currency = '&#36;'
+    
+    try:
+        n_of_decimals = len(str(threshold_step).rsplit('.')[1])
+    except:
+        n_of_decimals = 4
+        
+    threshold_values = list(np.arange(0, 1 + threshold_step, threshold_step)) 
+    middle_x = (threshold_values[0] + threshold_values[-1])/2  
+    
+    supported_label = ["TN", "FP", "FN", "TP"]
+    
+    if amounts is not None:      # if amount_classes not given or 'all', set to ["TN", "FP", "FN", "TP"]
+        amounts = list(amounts)
+        if (amount_classes is None) or (amount_classes == 'all'):
+            amount_classes = supported_label
+    elif amount_classes is not None:
+        raise TypeError("if amount_classes is given, amounts can't be None.") 
+        
+    if cost_dict is not None:    # if cost_classes not given or 'all', set to ["TN", "FP", "FN", "TP"]
+        if (cost_classes is None) or (cost_classes == 'all'):
+            cost_classes = supported_label
+    elif cost_classes is not None:
+        raise TypeError("if cost_classes is given, cost_dict can't be None.") 
+        
+    # get threshold-amount-cost dataframe (throws error if both cost_dict and amounts are None)
+    amount_cost_df = get_amount_cost_df(true_y, predicted_proba, threshold_values, amounts, cost_dict)
+    
+    # Create figure
+    fig = go.Figure()
+    
+    var_num = 0
+    subtitle = ""
+    col_lst = []
+        
+    if amount_classes is not None:
+        var_num += 1
+            
+        if isinstance(amount_classes, str):
+            amount_classes = [amount_classes]
+        
+        amount_col_lst = ['amount_' + amount_class for amount_class in amount_classes]
+        amount_cost_df['amount_sum'] = amount_cost_df[amount_col_lst].apply(sum, axis = 1)        
+        col_lst += amount_col_lst + ['amount_sum']
+        fig.add_trace(
+            go.Scatter(x = amount_cost_df['threshold'],
+                       y = amount_cost_df['amount_sum'],
+                       showlegend = False,
+                       mode="lines",
+                       hovertemplate = "total amount: " + currency + "%{y}<extra></extra>"))
+        
+        subtitle += "Amount categories: "     
+        subtitle += " + ".join(amount_classes)
+        subtitle += "<br>"  
+            
+    if cost_classes is not None:
+        var_num += 1
+        
+        if isinstance(cost_classes, str):
+            cost_classes = [cost_classes]
+
+        cost_col_lst = ['cost_' + cost_class for cost_class in cost_classes]
+        amount_cost_df['cost_sum'] = amount_cost_df[cost_col_lst].apply(sum, axis = 1)        
+        col_lst += cost_col_lst + ['cost_sum']
+        fig.add_trace(
+            go.Scatter(x = amount_cost_df['threshold'],
+                       y = amount_cost_df['cost_sum'],
+                       showlegend = False,
+                       mode="lines",
+                       hovertemplate = "total cost: " + currency + "%{y}<extra></extra>"))
+        
+        subtitle += "Cost categories: "     
+        subtitle += " + ".join(cost_classes)
+        
+    intercepts_str = ''   
+    
+    if var_num == 2:                 
+        diff_cost_amount = list(amount_cost_df['amount_sum'] - amount_cost_df['cost_sum'])
+        x_intersect = []
+        y_intersect = []
+        
+        for i in range(len(diff_cost_amount)-1):
+            if (diff_cost_amount[i] < 0) & (diff_cost_amount[i+1]>=0):
+                x_intersect.append(amount_cost_df.iloc[i+1]['threshold'])
+                y_intersect.append(amount_cost_df['cost_sum'].iloc[i+1])
+
+            elif (diff_cost_amount[i] > 0) & (diff_cost_amount[i+1]<=0):
+                x_intersect.append(amount_cost_df.iloc[i+1]['threshold'])
+                y_intersect.append(amount_cost_df['cost_sum'].iloc[i+1])
+
+        fig.add_trace(
+            go.Scatter(x=x_intersect, 
+                       y=y_intersect, 
+                       showlegend = False,
+                       mode = "markers",
+                       marker_symbol = 'diamond', 
+                       marker_size = 8,
+                       marker=dict(color='black'),
+                       hovertemplate = "%{x}<extra></extra>"))
+        
+        if x_intersect:
+            intercepts_str = 'Swaps at thresholds: '
+            intercepts_str += ", ".join(str(round(x, n_of_decimals)) for x in x_intersect)
+        
+    fig.update_layout(title = dict(text = f"<b>{title}</b><span style='font-size: 13px;'><br>" + subtitle + \
+                                   '<br>' + intercepts_str,
+                                   y = 0.965, yanchor = 'bottom'),
+                      margin={'t': 120},
+                     )
+    
+    fig.update_layout(height=600, hovermode="x unified")
+
+    # Update axis properties
+    fig.update_xaxes(title_text="Threshold")
+    fig.update_yaxes(title_text="Amount/Cost")
+    
+    fig.show()
+    
+    return amount_cost_df[['threshold'] + col_lst]
+
+                   

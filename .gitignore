@@ -1,0 +1,10 @@
+*.amltmp
+*.amlignore
+*.pyc
+.ipynb_checkpoints/*
+bctools/.ipynb_checkpoints/*
+example-notebook/.ipynb_checkpoints/*
+example-notebook/.ipynb_aml_checkpoints/*
+dist/*
+binclass_tools.egg-info/*
+test/*
