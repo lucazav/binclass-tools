@@ -210,7 +210,7 @@ var_metrics_df, invar_metrics_df, __ = bc.confusion_matrix_plot(
 
 Evidently, the Interactive Confusion Matrix plot will not present the table of optimal threshold values for the various metrics:
 
-![Interactive Confusion Matrix for the Training Set](/resources/images/02-interactive-confusion-matrix-test.png)
+![Interactive Confusion Matrix for the Test Set](/resources/images/02-interactive-confusion-matrix-test.png)
 
 As you can see from the code, this time the dataframes returned are only the first two.
 
