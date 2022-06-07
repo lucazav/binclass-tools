@@ -1,6 +1,6 @@
 # binclass-tools: Binary Classification Tools for Python At Your Fingertips
 
-<img src="/resources/images/logo.png" width="300" height="100" />
+<img src="/resources/images/logo.png" width="600" height="200" />
 
 A set of Python wrappers and interactive plots that facilitate the analysis of binary classification problems.
 
