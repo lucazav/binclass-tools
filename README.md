@@ -18,7 +18,7 @@ The __binclass-tools__ package makes the following available to you:
 
 On [Towards Data Science](https://towardsdatascience.com/) you will find the following article describing the theory behind all the functions of the package and the path that led me to create a package for analyzing binary classifications that also included calculating optimal threshold values for specific metrics:
 
-[Finding the Best Classification Threshold for Imbalanced Classifications with the Interactive Confusion Matrix and Line Charts]()
+[Finding the Best Classification Threshold for Imbalanced Classifications with the Interactive Confusion Matrix and Line Charts](https://medium.com/towards-data-science/finding-the-best-classification-threshold-for-imbalanced-classifications-with-interactive-plots-7d65828dda38)
 
 ## Quick Start
 
