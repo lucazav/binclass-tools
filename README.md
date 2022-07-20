@@ -2,6 +2,11 @@
 
 <img src="/resources/images/logo.png" width="600" height="200" />
 
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/binclass-tools)
+[![GitHub license](https://img.shields.io/github/license/lucazav/binclass-tools)](https://github.com/lucazav/binclass-tools/blob/main/LICENSE)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/lucazav/binclass-tools?color=orange)
+[![Downloads](https://static.pepy.tech/personalized-badge/binclass-tools?period=total&units=international_system&left_color=grey&right_color=magenta&left_text=Downloads)](https://pepy.tech/project/binclass-tools)
+
 A set of Python wrappers and interactive plots that facilitate the analysis of binary classification problems.
 
 ---
@@ -18,7 +23,7 @@ The __binclass-tools__ package makes the following available to you:
 
 On [Towards Data Science](https://towardsdatascience.com/) you will find the following article describing the theory behind all the functions of the package and the path that led me to create a package for analyzing binary classifications that also included calculating optimal threshold values for specific metrics:
 
-[Finding the Best Classification Threshold for Imbalanced Classifications with the Interactive Confusion Matrix and Line Charts](https://medium.com/towards-data-science/finding-the-best-classification-threshold-for-imbalanced-classifications-with-interactive-plots-7d65828dda38)
+[Finding the Best Classification Threshold for Imbalanced Classifications with the Interactive Confusion Matrix and Line Charts](https://medium.com/towards-data-science/finding-the-best-classification-threshold-for-imbalanced-classifications-with-interactive-plots-7d65828dda38)
 
 ## Quick Start
 
@@ -85,8 +90,66 @@ train_predicted_proba = cls.predict_proba(X_train)[:,1]
 # Get prediction probabilities for the test set
 test_predicted_proba = cls.predict_proba(X_test)[:,1] 
 ```
+Let's generate some known graphs with the functions in the binclass-tools package to check the overall behavior of the model on the test set.
 
-Let's also set up a set of variables to pass as parameters in the subsequent binclass-tools functions we will use. Considering that we are going to do first an analysis of how the model performs on the training dataset in order to get also the optimal threshold values, these are the variables we will calculate:
+We can start by visualizing the _Receiver Operating Characteristic (ROC) Curve_, using the following function, which also returns the value of the area under the curve:
+
+```python
+area_under_ROC = bc.curve_ROC_plot(true_y= y_test, 
+                                   predicted_proba = test_predicted_proba)
+```
+
+Which generates the plot:
+
+![ROC Curve for the Test Set](/resources/images/01-ROC-curve-test.png)
+
+and returns the AUC value:
+
+```python
+>>> area_under_ROC
+0.9748427672955975
+```
+
+Next, you can visualize the _Precision-Recall (PR) Curve_ plot with the iso-Fbeta curves. 
+First, let's recall the definition of the F-beta score: it is the weighted harmonic mean of precision and recall, reaching its optimal value at 1 and its worst value at 0.
+The beta parameter determines the weight of recall in the combined score. beta < 1 lends more weight to precision, while beta > 1 favors recall.
+An iso-Fbeta curve thus contains, by definition, all points in the precision-recall space whose F-beta scores are equal. 
+The function *curve_PR_plot* allows us to display ISO curves associated with F-beta score values of 0.2, 0.4, 0.6 and 0.8. The function takes as input the beta parameter (set to 1 as default value):
+
+```python
+area_under_PR = bc.curve_PR_plot(true_y= y_test, 
+                                 predicted_proba = test_predicted_proba, 
+                                 beta = 1)
+```
+
+Here the output:
+
+![Precision-Recall Plot with isoF1 Curves for the Test Set](/resources/images/02-PR-isoF1-plot-test.png)
+
+This function also returns, as in the ROC curve case, the value of the area under the curve:
+```python
+>>> area_under_PR 
+0.9295134692043583
+```
+
+For a more in-depth analysis of the model's predicted probabilities, we can visualize through violin plots the distribution of the probabilities grouped by the relative true class and, for each threshold, see whether the predicted probability for each data point generates a correct prediction or not.
+The following binclass-tools function performs the tasks just mentioned, taking as input the size of the step separating one threshold value from the other (always considering the extremes 0 and 1 inclusive):
+
+```python
+threshold_step = 0.05
+
+bc.predicted_proba_violin_plot(true_y = y_test, 
+                               predicted_proba = test_predicted_proba, 
+                               threshold_step = threshold_step)
+```
+
+Here the interactive plot generated:
+
+![Interactive Probabilities Violin Plot for the Test Set](/resources/images/03-interactive-violin-plot-test.png)
+
+Afterwards, we can conduct a more detailed threshold-related analysis of the model's performance.
+Let's set up a set of variables to pass as parameters in the subsequent binclass-tools functions we will use. 
+Considering that we are going to do first an analysis of how the model performs on the training dataset in order to get also the optimal threshold values, these are the variables we will calculate:
 
 * The size of the step separating one threshold value from the other (always considering the extremes 0 and 1 inclusive).
 
@@ -133,7 +196,7 @@ var_metrics_df, invar_metrics_df, opt_thresh_df = bc.confusion_matrix_plot(
 
 Here the output:
 
-![Interactive Confusion Matrix for the Training Set](/resources/images/01-interactive-confusion-matrix-train.png)
+![Interactive Confusion Matrix for the Training Set](/resources/images/04-interactive-confusion-matrix-train.png)
 
 As you can see, the interactive confusion matrix plot also returns metric dataframes that can be used in your code if needed. One is the _threshold dependent metrics dataframe_:
 
@@ -210,7 +273,7 @@ var_metrics_df, invar_metrics_df, __ = bc.confusion_matrix_plot(
 
 Evidently, the Interactive Confusion Matrix plot will not present the table of optimal threshold values for the various metrics:
 
-![Interactive Confusion Matrix for the Test Set](/resources/images/02-interactive-confusion-matrix-test.png)
+![Interactive Confusion Matrix for the Test Set](/resources/images/05-interactive-confusion-matrix-test.png)
 
 As you can see from the code, this time the dataframes returned are only the first two.
 
@@ -305,7 +368,7 @@ amount_cost_df, total_amount = bc.confusion_linechart_plot(
 
 Here the output:
 
-![Interactive Confusion Line Chart](/resources/images/03-interactive-confusion-line-chart.png)
+![Interactive Confusion Line Chart](/resources/images/06-interactive-confusion-line-chart.png)
 
 You can see that there are also black "diamonds" indicating the first threshold value in which there is a swap of the amount and cost curves. The curve swapping points can also be more than one.
 
@@ -377,7 +440,7 @@ total_cost_amount_df = bc.total_amount_cost_plot(
 
 Here the resulting plot:
 
-![Interactive Amount-Cost Line Chart](/resources/images/04-interactive-amount-cost-line-chart.png)
+![Interactive Amount-Cost Line Chart](/resources/images/07-interactive-amount-cost-line-chart.png)
 
 As in the other cases, this function returns a dataframe with the amount and cost values, both for each category in the confusion matrix and for selected aggregates of them, associated with each threshold:
 
@@ -453,12 +516,12 @@ If you are interested in using _binclass-tools_ in your own code/notebooks, you'
 - plolty
 
 ## Authors
-[Luca Zavarella](https://github.com/lucazav) and [Greta Villa](https://github.com/GretaVilla).
+[Luca Zavarella](https://github.com/lucazav), [Greta Villa](https://github.com/GretaVilla) and 
+[Julio Cesar Cuaran](https://github.com/JulioCesarCuaran).
 
 ## Acknowledgements
 
 ## License
 
 This package is licensed under the [BSD-3-Clause](https://opensource.org/licenses/BSD-3-Clause) license.
-
 

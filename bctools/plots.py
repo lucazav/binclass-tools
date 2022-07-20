@@ -4,13 +4,319 @@
 import numpy as np
 import pandas as pd
 
+from sklearn.metrics import roc_curve, auc, precision_recall_curve
+
 import plotly.graph_objects as go
+import plotly.express as px 
 from plotly.subplots import make_subplots
 
-from .utilities import _get_amount_matrix, _get_cost_matrix
+from .utilities import _get_amount_matrix, _get_cost_matrix, _compute_confusion_class
 from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df
 
 from .thresholds import get_optimized_thresholds_df
+
+def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, title = "Interactive Probabilities Violin Plot"):
+    
+    """
+    Plots interactive and customized violin plots of predicted probabilties with plotly, 
+    one for each true class (0, 1), 
+    displayng the distribution of each "confusion class" (TN, FP, FN, TP) for the selected threshold
+
+    Plot is constituted by: 
+    - two violin plots, one for each class (0, 1), that represent the distribution of the predicted probabilties
+    - for each threshold, the distribution of the predicted probabilties for each "confusion class" (TN, FP, FN, TP)
+    - slider that allows to select the threshold 
+
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    threshold_step: float, default=0.01
+        step between each classification threshold (ranging from 0 to 1) below which prediction label is 0, 1 otherwise
+        each value will have a corresponding slider step
+    title: str, default='Interactive probabilities Violin Plot'
+        The main title of the plot.
+    """
+    np.random.seed(11)
+    
+    data_df=pd.DataFrame({'class': true_y,
+                          'pred': predicted_proba}).sort_values('pred')
+    
+    try:
+        n_of_decimals = len(str(threshold_step).rsplit('.')[1])
+    except:
+        n_of_decimals = 4
+    
+    threshold_values = list(np.arange(0, 1 + threshold_step, threshold_step))
+    
+    main_title = f"<b>{title}</b><br>"
+    
+    # VIOLIN PLOT 
+    full_fig=go.Figure(data=go.Violin(y=data_df['pred'], x=data_df['class'], line_color='black', 
+                                     meanline_visible=True, points=False, fillcolor=None, opacity=0.3, box=None,
+                                     scalemode='count', showlegend = False))
+    
+    length_fig_list=[] # saves lenghts of strip figure data (can contain 1,2,3,4 classes)
+    titles = {}
+    
+    choices = ['TN', 'FP', 'FN', 'TP']
+    
+    # STRIP PLOT
+    for threshold in threshold_values:
+        
+        threshold_string = "thresh_" + str(round(threshold, n_of_decimals))
+        
+        
+        conditions = [(data_df['class'] == 0) & (data_df['pred'] < threshold), 
+                      (data_df['class'] == 0) & (data_df['pred'] >= threshold),
+                      (data_df['class'] == 1) & (data_df['pred'] < threshold),
+                      (data_df['class'] == 1) & (data_df['pred'] >= threshold)]
+                                            
+        data_df[threshold_string] = np.select(conditions, choices)
+        
+        count_class = data_df[threshold_string].value_counts()
+        
+        titles[threshold] = ''
+        for x in count_class.index:
+            titles[threshold] += x + ": " + str(count_class[x]) + ",  "
+        
+        titles[threshold] = titles[threshold][:-3] #removes last 3 char (2 spaces and comma)
+                            
+        # NOTE: px strip generates n plots, one for each color class (TN, FP, FN, TP) it finds)
+        strip_points_fig = px.strip(data_df, x='class', y='pred', color= threshold_string, 
+                                    color_discrete_map = {'FN':'red', 'FP':'mediumpurple',
+                                                          'TP':'green', 'TN':'blue'},
+                                    log_y=True, width=550, height=550, hover_data = [data_df.index])
+            
+        strip_points_fig.update_traces(hovertemplate = 'Idx = %{customdata}<br>Class = %{x}<br>Pred = %{y}', jitter = 1, marker_size=3)
+        
+        length_fig_list.append(len(strip_points_fig.data))
+        
+        for i in range(len(strip_points_fig.data)):
+            strip_points_fig.data[i].visible=False
+            full_fig.add_trace(strip_points_fig.data[i])
+                
+    full_fig.update_layout(legend_font_size=9.5, legend_itemsizing='constant', legend_traceorder='grouped', 
+                           title=dict(text = main_title + '<span style="font-size: 13px;">' \
+                                      + titles[threshold_values[0]] + '</span>',
+                                      y = 0.965, yanchor = 'bottom'), 
+                           width=550, height=550)
+    full_fig.update_layout(margin=dict(l=40, r=40, t=60, b=40))
+       
+    # makes visible the first strip points figure
+    for j in range(length_fig_list[0]):
+        full_fig.data[j+1].visible = True #j+1 becouse figure 0 is the violin plot
+
+    # STEPS AND SLIDER
+    # Create and add slider
+    steps = []
+    idx = 1 # saves number of strip plots plotted
+    
+    for i in range(len(threshold_values)): 
+        
+        step = dict(
+            method="update",
+            args=[{"visible": [False] * len(full_fig.data)},
+                  {"title": dict(text = main_title + '<span style="font-size: 13px;">' \
+                                 + titles[threshold_values[i]] + '</span>',
+                                 y = 0.965, yanchor = 'bottom')
+                  },
+                  #{"title": dict(text = main_title + '<span style="font-size: 13px;">' \
+                   #                           + subtitle + titles[threshold] + '</span>', 
+                   #                      y = 0.965, yanchor = 'bottom')}
+                  {"value": "set "}],
+            label = str(round(threshold_values[i], n_of_decimals)),
+        )
+            
+        n_of_strip_plots = length_fig_list[i]
+        step["args"][0]["visible"][0]= True  # Toggle first trace to "visible" (violin plots)
+
+        for j in range(idx, idx+n_of_strip_plots):
+            step["args"][0]["visible"][j] = True  # Toggle j'th trace to "visible"
+
+        idx += n_of_strip_plots
+
+        steps.append(step)
+
+    sliders = [dict(
+        active=0,
+        currentvalue={"prefix": "Threshold: "},
+        pad={"t": 50},
+        steps=steps
+    )]
+
+    full_fig.update_layout(
+        sliders=sliders
+    )
+            
+    full_fig.update_xaxes(title_text = "True class")
+    full_fig.update_yaxes(title_text = "Predicted probabilties")
+    full_fig.show()
+    
+def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall Curve"):
+    
+    """
+    - Plots interactive Precision-Recall curve with plotly 
+      displayng area under the PR curve value and ISO-Fbeta curves  
+    - Returns the value of area under the PR curve
+    
+    Plot is constituted by: 
+    - a linechart of the the Precision-Recall curve, 
+    - a dashed baseline (representing the PR curve of a random classifier) 
+    - four ISO-f1 curve 
+
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    beta: float > 0, default=1
+        Determines the weight of recall in the combined f-score (used for Iso-Fbeta curves)
+    title: str, default="Precision Recall Curve"
+        The main title of the plot.
+
+    Returns
+    ----------   
+    area_under_PR_curve: float
+        value of area under the PR curve
+    """
+    main_title = f"<b>{title}</b>"
+    
+    if beta < 0:
+        raise ValueError("beta should be >=0 in the F-beta score") 
+
+    precision, recall, thresholds = precision_recall_curve(true_y, predicted_proba)
+    
+    listTr = thresholds.tolist()
+    listTr.append(None)
+    
+    baseline = len(true_y[true_y==1]) / len(true_y)
+    
+    curve_df = pd.DataFrame({"Thresholds": listTr,
+                             "Recall":recall.tolist(),
+                             "Precision":precision.tolist()})
+    
+    pr_fig=px.line(curve_df, x="Recall", y="Precision", hover_data=["Thresholds"], title=main_title)
+    
+    pr_fig.update_traces(hovertemplate='Threshold: %{customdata:.4f} <br>Precision: %{y:.4f} <br>Recall: %{x:.4f}<extra></extra>')
+    pr_fig.update_traces(line_color='#222A2A', line_width=2, textposition="top center")
+    full_fig = pr_fig
+
+    f_scores = np.linspace(0.2, 0.8, num=4)
+    
+    for f_score in f_scores:
+        x = np.linspace(0.01, 1)
+        y = f_score * x / (x + beta * beta * (x - f_score))
+        X = x[y >= 0]
+        listX = X.tolist()
+        Y = y[y >= 0]
+        listY = Y.tolist()
+        
+        recall_precision_df=pd.DataFrame({'recall':listX,
+                                          'precision':listY})
+               
+        iso_fig=px.line(recall_precision_df, x="recall", y="precision")
+        iso_fig.update_traces(hovertemplate=[]) # no hover info displayed but keeps dashed lines
+        iso_fig.update_traces(line_color='#778AAE', line=dict(dash='dot'), line_width=0.3)
+        
+        full_fig.add_annotation(x=0.90, y=y[45] + 0.01, text="f"+ str(beta) + "={0:0.1f}".format(f_score),
+                                showarrow=False,yshift=10)       
+        full_fig=go.Figure(data = full_fig.data + iso_fig.data, layout = full_fig.layout)
+        
+    area_under_pr_curve = auc(recall, precision)
+ 
+    full_fig.update_xaxes(range=[0.0, 1.0],title_text='Recall')
+    full_fig.update_yaxes(range=[0.0, 1.05],title_text='Precision')
+    
+    full_fig.add_shape(type='line', line=dict(dash='dash'),x0=0, x1=1, y0=baseline, y1=baseline)
+    
+    full_fig['data'][0]['showlegend']= True
+    full_fig['data'][1]['showlegend']= True
+    full_fig['data'][0]['name']= f'PR Curve (AUC={area_under_pr_curve:.2f})'
+    full_fig['data'][1]['name']= 'iso-f' + str(beta) + ' curves'
+    
+    full_fig.update_layout(legend=dict(yanchor="top",y=0.20,xanchor="left",x=0.01),
+                           legend_font_size=9.5, 
+                           width=550, height=550)
+    
+    full_fig.update_xaxes(showspikes=True)
+    full_fig.update_yaxes(showspikes=True)
+    full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+    full_fig.show()
+    
+    return area_under_pr_curve
+
+def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characteristic Curve"):
+    
+    """
+    - Plots interactive ROC curve with plotly 
+      displayng area under the ROC curve value    
+    - Returns the value of area under the ROC curve
+    
+    Plot is constituted by: 
+    a linechart of the the ROC curve (true positive rate, or recall, against false positive rate) 
+    and a dashed baseline (representing the ROC curve of a random classifier)
+
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    title: str, default="Receiver Operating Characteristic Curve"
+        The main title of the plot.
+
+    Returns
+    ----------   
+    area_under_ROC_curve: float
+        value of area under the ROC curve
+    """
+    main_title = f"<b>{title}</b>"
+    
+    fpr, tpr, thresholds = roc_curve(true_y, predicted_proba)
+    
+    curve_df = pd.DataFrame({"Thresholds": thresholds.tolist(),
+                             "False Positive Rate":fpr.tolist(),
+                             "True Positive Rate":tpr.tolist()})
+    
+    fig = px.line(curve_df, 
+                  x="False Positive Rate", 
+                  y="True Positive Rate",
+                  title=main_title,
+                  hover_data=["Thresholds"],
+                  width=550, height=550)
+    
+    fig.update_traces(line_color="#222A2A", line_width=2, textposition="top center")
+    fig.update_traces(hovertemplate='Threshold: %{customdata:.4f} <br>False Positive Rate: %{x:.4f} <br>True Positive Rate: %{y:.4f}<extra></extra>')
+    
+    fig.add_shape(type="line", line=dict(dash="dash"), 
+                  x0=0, x1=1, y0=0, y1=1)
+    
+    area_under_ROC_curve = auc(fpr, tpr)
+    
+    fig["data"][0]["name"]= f"ROC Curve (AUC={area_under_ROC_curve:.3f})"
+    
+    fig["data"][0]["showlegend"]= True
+    fig.update_layout(legend = dict(yanchor="top", y=0.20, xanchor="left", x=0.5), 
+                      legend_font_size=9.5)
+    
+    fig.update_xaxes(showspikes=True)
+    fig.update_yaxes(showspikes=True)
+    
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    fig.update_xaxes(range=[0,1], constrain="domain")
+    fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+
+    fig.show()
+    
+    return area_under_ROC_curve
+
 
 def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01, 
                           amounts = None, cost_dict = None, optimize_threshold = None, 
