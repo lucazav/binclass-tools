@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import plotly.express as px 
 from plotly.subplots import make_subplots
 
-from .utilities import _get_amount_matrix, _get_cost_matrix, _compute_confusion_class
+from .utilities import _get_amount_matrix, _get_cost_matrix
 from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df
 
 from .thresholds import get_optimized_thresholds_df
