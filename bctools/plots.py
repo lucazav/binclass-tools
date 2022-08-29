@@ -4,7 +4,7 @@
 import numpy as np
 import pandas as pd
 
-from sklearn.metrics import roc_curve, auc, precision_recall_curve
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, fbeta_score
 
 import plotly.graph_objects as go
 import plotly.express as px 
@@ -195,19 +195,32 @@ def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall C
         raise ValueError("beta should be >=0 in the F-beta score") 
 
     precision, recall, thresholds = precision_recall_curve(true_y, predicted_proba)
-    
+       
     listTr = thresholds.tolist()
+    
+    listFbeta = []
+    
+    for threshold in listTr:
+        y_pred = [int(x >= threshold) for x in predicted_proba]
+        F_beta_score = fbeta_score(true_y, y_pred, beta=beta, zero_division=0)
+        listFbeta.append(F_beta_score)
+        
     listTr.append(None)
+    listFbeta.append(0)
     
     baseline = len(true_y[true_y==1]) / len(true_y)
     
     curve_df = pd.DataFrame({"Thresholds": listTr,
                              "Recall":recall.tolist(),
-                             "Precision":precision.tolist()})
+                             "Precision":precision.tolist(),
+                             "Fbeta":listFbeta})
     
-    full_fig=px.line(curve_df, x="Recall", y="Precision", hover_data=["Thresholds"], title=main_title)
+    full_fig=px.line(curve_df, x="Recall", y="Precision", hover_data=["Thresholds", "Fbeta"], title=main_title)
     
-    full_fig.update_traces(hovertemplate='Threshold: %{customdata:.4f} <br>Precision: %{y:.4f} <br>Recall: %{x:.4f}<extra></extra>')
+    fbeta_hover_str = ' <br>F' + str(beta) +' score: %{customdata[1]:.4f} '
+    
+    full_fig.update_traces(hovertemplate='Threshold: %{customdata[0]:.4f} <br>Precision: %{y:.4f} <br>Recall: %{x:.4f} ' + fbeta_hover_str + '<extra></extra>')
+    
     full_fig.update_traces(textposition="top center") 
 
     f_scores = np.linspace(0.2, 0.8, num=4)

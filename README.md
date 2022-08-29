@@ -344,6 +344,8 @@ Specifically for cost optimization (minimization), you can use the following fun
 opt_cost_threshold_value = bc.thresholds.get_cost_optimal_threshold(
     y_train, 
     train_predicted_proba, 
+    threshold_values,
+    
     cost_dict = train_cost_dict,
 
     # GHOST parameters (these values are also the default ones) 
@@ -516,12 +518,11 @@ If you are interested in using _binclass-tools_ in your own code/notebooks, you'
 - plolty
 
 ## Authors
-[Luca Zavarella](https://github.com/lucazav), [Greta Villa](https://github.com/GretaVilla) and 
-[Julio Cesar Cuaran](https://github.com/JulioCesarCuaran).
+[Luca Zavarella](https://github.com/lucazav), [Greta Villa](https://github.com/GretaVilla)
 
-## Acknowledgements
+## Collaborators
+[Julio Cesar Cuaran](https://github.com/JulioCesarCuaran)
 
 ## License
-
 This package is licensed under the [BSD-3-Clause](https://opensource.org/licenses/BSD-3-Clause) license.
 

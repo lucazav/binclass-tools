@@ -10,7 +10,7 @@ long_description = (here / "README.md").read_text(encoding="utf-8")
 setup(
     name="binclass-tools",  # 
     
-    version="0.2.2",  # Required
+    version="0.2.3",  # Required
     description="A set of tools that facilitates the analysis of binary classification problems",  # Optional
     
     long_description=long_description,  # Optional
@@ -43,7 +43,8 @@ setup(
                       "pandas",
                       "scikit-learn>=0.22.1",
                       "matplotlib",
-                      "plotly"
+                      "plotly",
+                      "nbformat>=4.2.0",
                      ],  
     
   
