@@ -516,6 +516,7 @@ If you are interested in using _binclass-tools_ in your own code/notebooks, you'
 - scikit-learn (>=0.22.1)
 - matplotlib
 - plolty
+- nbformat (>= 4.2.0)
 
 ## Authors
 [Luca Zavarella](https://github.com/lucazav), [Greta Villa](https://github.com/GretaVilla)
