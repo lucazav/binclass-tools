@@ -522,7 +522,7 @@ If you are interested in using _binclass-tools_ in your own code/notebooks, you'
 [Luca Zavarella](https://github.com/lucazav), [Greta Villa](https://github.com/GretaVilla)
 
 ## Collaborators
-[Julio Cesar Cuaran](https://github.com/JulioCesarCuaran)
+[Julio Cesar Cuaran Cuaran](https://github.com/JulioCesarCuaran)
 
 ## License
 This package is licensed under the [BSD-3-Clause](https://opensource.org/licenses/BSD-3-Clause) license.
