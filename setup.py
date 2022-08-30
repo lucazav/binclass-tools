@@ -10,7 +10,7 @@ long_description = (here / "README.md").read_text(encoding="utf-8")
 setup(
     name="binclass-tools",  # 
     
-    version="0.2.3",  # Required
+    version="0.2.4",  # Required
     description="A set of tools that facilitates the analysis of binary classification problems",  # Optional
     
     long_description=long_description,  # Optional
@@ -31,6 +31,8 @@ setup(
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
     ],
     
     keywords="binary, classification, confusion, matrix, threshold, plot, precision, recall", 
