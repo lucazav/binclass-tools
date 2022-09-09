@@ -4,18 +4,202 @@
 import numpy as np
 import pandas as pd
 
-from sklearn.metrics import roc_curve, auc, precision_recall_curve, fbeta_score
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, fbeta_score, confusion_matrix
 
 import plotly.graph_objects as go
 import plotly.express as px 
 from plotly.subplots import make_subplots
 
-from .utilities import _get_amount_matrix, _get_cost_matrix
+from .utilities import _get_amount_matrix, _get_cost_matrix, _get_density_curve_data
 from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df
 
 from .thresholds import get_optimized_thresholds_df
 
-def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, marker_size = 3, title = "Interactive Probabilities Violin Plot"):
+def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall Curve", show_display_modebar = True):
+    
+    """
+    - Plots interactive Precision-Recall curve with plotly 
+      displayng area under the PR curve value and ISO-Fbeta curves  
+    - Returns the value of area under the PR curve
+    
+    Plot is constituted by: 
+    - a linechart of the the Precision-Recall curve, 
+    - a dashed baseline (representing the PR curve of a random classifier) 
+    - four ISO-f1 curve 
+
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    beta: float > 0, default=1
+        Determines the weight of recall in the combined f-score (used for Iso-Fbeta curves)
+    title: str, default="Precision Recall Curve"
+        The main title of the plot.
+    show_display_modebar: bool, default=True
+        Determines wether plotly displayModeBar will be shown
+    
+    Returns
+    ----------   
+    area_under_PR_curve: float
+        value of area under the PR curve
+    """
+    main_title = f"<b>{title}</b>"
+    
+    if beta < 0:
+        raise ValueError("beta should be >=0 in the F-beta score") 
+
+    precision, recall, thresholds = precision_recall_curve(true_y, predicted_proba)
+       
+    listTr = thresholds.tolist()
+    
+    listFbeta = []
+    
+    for threshold in listTr:
+        y_pred = [int(x >= threshold) for x in predicted_proba]
+        F_beta_score = fbeta_score(true_y, y_pred, beta=beta, zero_division=0)
+        listFbeta.append(F_beta_score)
+        
+    listTr.append(None)
+    listFbeta.append(0)
+    
+    area_under_pr_curve = auc(recall, precision)
+    
+    baseline = len(true_y[true_y==1]) / len(true_y)
+    
+    curve_df = pd.DataFrame({"Thresholds": listTr,
+                             "Recall":recall.tolist(),
+                             "Precision":precision.tolist(),
+                             "Fbeta":listFbeta})
+    
+    full_fig=px.line(curve_df, x="Recall", y="Precision", hover_data=["Thresholds", "Fbeta"], title=main_title)
+    
+    fbeta_hover_str = ' <br>F' + str(beta) +' score: %{customdata[1]:.4f} '
+    
+    full_fig.update_traces(hovertemplate='Threshold: %{customdata[0]:.4f} <br>Precision: %{y:.4f} <br>Recall: %{x:.4f} ' + fbeta_hover_str + '<extra></extra>')
+    
+    full_fig.update_traces(textposition="top center", name = f'PR Curve (AUC={area_under_pr_curve:.2f})') 
+
+    f_scores = np.linspace(0.2, 0.8, num=4)
+    
+    for f_score in f_scores:
+        x = np.linspace(0.01, 1)
+        y = f_score * x / (x + beta * beta * (x - f_score))
+        X = x[y >= 0]
+        listX = X.tolist()
+        Y = y[y >= 0]
+        listY = Y.tolist()
+        
+        recall_precision_df=pd.DataFrame({'recall':listX,
+                                          'precision':listY})
+               
+        iso_fig=px.line(recall_precision_df, x="recall", y="precision")
+        
+        iso_fig.update_traces(hovertemplate=[]) # no hover info displayed but keeps dashed lines
+        iso_fig.update_traces(line_color='#4C78A8', line=dict(dash='dot'), line_width=0.8, 
+                              legendgroup = 'iso_curves', name = 'ISO-f' + str(beta) + ' Curves',
+                              showlegend  = False)
+        
+        full_fig.add_annotation(x=0.90, y=y[45] + 0.01, text="f"+ str(beta) + "={0:0.1f}".format(f_score),
+                                showarrow=False,yshift=10)       
+
+        full_fig.add_traces(list(iso_fig.select_traces()))
+            
+    #add baseline
+    full_fig.add_trace(go.Scatter(line=dict(dash='dash', color = '#20313e'), 
+                                  x=[-1, 2], y=[baseline, baseline], 
+                                  mode='lines', name = 'Baseline'))
+ 
+    full_fig.update_xaxes(range=[0.0, 1.03])
+    full_fig.update_yaxes(range=[0.0, 1.03])
+    
+    full_fig['data'][0]['showlegend']= True  #pr curve
+    full_fig['data'][1]['showlegend']= True  #first iso curve
+    full_fig['data'][-1]['showlegend']= True #baseline
+    
+    full_fig.update_layout(legend=dict(yanchor="top", y=0.18, xanchor="left", x=0.03),
+                           legend_font_size=9, 
+                           width=550, height=550)
+    
+    full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+    full_fig.show(config = dict(displayModeBar = show_display_modebar))
+    
+    return area_under_pr_curve
+
+def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characteristic Curve",  show_display_modebar = True):
+    
+    """
+    - Plots interactive ROC curve with plotly 
+      displayng area under the ROC curve value    
+    - Returns the value of area under the ROC curve
+    
+    Plot is constituted by: 
+    a linechart of the the ROC curve (true positive rate, or recall, against false positive rate) 
+    and a dashed baseline (representing the ROC curve of a random classifier)
+
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    title: str, default="Receiver Operating Characteristic Curve"
+        The main title of the plot.
+    show_display_modebar: bool, default=True
+        Determines wether plotly displayModeBar will be shown
+
+    Returns
+    ----------   
+    area_under_ROC_curve: float
+        value of area under the ROC curve
+    """
+    main_title = f"<b>{title}</b>"
+    
+    fpr, tpr, thresholds = roc_curve(true_y, predicted_proba)
+    
+    area_under_ROC_curve = auc(fpr, tpr)
+    
+    curve_df = pd.DataFrame({"Thresholds": thresholds.tolist(),
+                             "False Positive Rate":fpr.tolist(),
+                             "True Positive Rate":tpr.tolist()})
+    
+    fig = px.line(curve_df, 
+                  x="False Positive Rate", 
+                  y="True Positive Rate",
+                  title=main_title,
+                  hover_data=["Thresholds"],
+                  width=550, height=550)
+    
+    fig.update_traces(textposition = "top center",
+                      name = f"ROC Curve (AUC={area_under_ROC_curve:.3f})")
+    fig.update_traces(hovertemplate='Threshold: %{customdata:.4f} <br>False Positive Rate: %{x:.4f} <br>True Positive Rate: %{y:.4f}<extra></extra>')
+    
+    #add baseline
+    fig.add_trace(go.Scatter(line=dict(dash='dash', color = '#20313e'), 
+                                  x=[-1, 2], y=[-1, 2], 
+                                  mode='lines', name = 'Baseline'))
+    
+    fig["data"][0]["showlegend"]= True
+    fig["data"][1]["showlegend"]= True
+    
+    fig.update_layout(legend = dict(yanchor="top", y=0.18, xanchor="right", x=0.97), 
+                      legend_font_size=9,
+                      width=550, height=550) 
+    
+    fig.update_yaxes(range=[0.0, 1.03])
+    fig.update_xaxes(range=[-0.03, 1.0]) 
+    
+    fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+
+    fig.show(config = dict(displayModeBar = show_display_modebar))
+    
+    return area_under_ROC_curve
+
+def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, marker_size = 3, 
+                                title = "Interactive Probabilities Violin Plot", show_display_modebar = True):
     
     """
     Plots interactive and customized violin plots of predicted probabilties with plotly, 
@@ -29,7 +213,7 @@ def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, 
 
     Parameters
     ----------
-    true_y: sequence of ints
+    true_y: sequence of ints (0 or 1)
         True labels 
     predicted_proba: sequence of floats
         predicted probabilities for class 1
@@ -39,8 +223,10 @@ def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, 
         each value will have a corresponding slider step
     marker_size: int, default=3
         Size of the points to be plotted
-    title: str, default='Interactive probabilities Violin Plot'
+    title: str, default='Interactive Probabilities Violin Plot'
         The main title of the plot.
+    show_display_modebar: bool, default=True
+        Determines wether plotly displayModeBar will be shown
     """
     np.random.seed(11)
     
@@ -158,187 +344,251 @@ def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, 
             
     full_fig.update_xaxes(title_text = "True class")
     full_fig.update_yaxes(title_text = "Predicted probabilties")
-    full_fig.show()
+    full_fig.show(config = dict(displayModeBar = show_display_modebar))
     
-def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall Curve"):
+def predicted_proba_density_curve_plot(true_y, predicted_proba, 
+                                       threshold_step = 0.01,  
+                                       curve_type = 'kde',
+                                       title = "Interactive Probabilities Density Plot", show_display_modebar = True):
     
     """
-    - Plots interactive Precision-Recall curve with plotly 
-      displayng area under the PR curve value and ISO-Fbeta curves  
-    - Returns the value of area under the PR curve
-    
+    Plots interactive and customized density curve of predicted probabilties with plotly, 
+    one for each true class (0, 1), 
+    with different colours for each "confusion class" (TN, FP, FN, TP) for the selected threshold
+
     Plot is constituted by: 
-    - a linechart of the the Precision-Recall curve, 
-    - a dashed baseline (representing the PR curve of a random classifier) 
-    - four ISO-f1 curve 
+    - two kde density curves (or normal distribution curves, depending on the curve_type parameter), 
+      one for each class (0, 1), that represent the distribution of the predicted probabilties.
+      Colors of the curves will change depending on threshold, to underly each "confusion class" (TN, FP, FN, TP)
+    - slider that allows to select the threshold 
 
     Parameters
     ----------
-    true_y: sequence of ints
+    true_y: sequence of ints (0 or 1)
         True labels 
     predicted_proba: sequence of floats
         predicted probabilities for class 1
         (e.g. output from model.predict_proba(data)[:,1]) 
-    beta: float > 0, default=1
-        Determines the weight of recall in the combined f-score (used for Iso-Fbeta curves)
-    title: str, default="Precision Recall Curve"
+    threshold_step: float, default=0.01
+        step between each classification threshold (ranging from 0 to 1) below which prediction label is 0, 1 otherwise
+        each value will have a corresponding slider step
+    curve_type: {'kde', 'normal'},  default=kde 
+        type of curve, either kernel density estimation or normal curve
+    title: str, default="Interactive Probabilities Density Plot"
         The main title of the plot.
-
-    Returns
-    ----------   
-    area_under_PR_curve: float
-        value of area under the PR curve
+    show_display_modebar: bool, default=True
+        Determines wether plotly displayModeBar will be shown
     """
-    main_title = f"<b>{title}</b>"
-    
-    if beta < 0:
-        raise ValueError("beta should be >=0 in the F-beta score") 
+    predicted_proba = np.array(predicted_proba)
+    true_y = np.array(true_y)
 
-    precision, recall, thresholds = precision_recall_curve(true_y, predicted_proba)
-       
-    listTr = thresholds.tolist()
-    
-    listFbeta = []
-    
-    for threshold in listTr:
+    try:
+        n_of_decimals = len(str(threshold_step).rsplit('.')[1])
+    except:
+        n_of_decimals = 4
+
+    threshold_values = list(np.arange(0, 1+threshold_step, threshold_step)) #define thresholds array  
+    main_title = f"<b>{title}</b><br>"
+
+    # get density curve data
+    x_N,  y_N = _get_density_curve_data([predicted_proba[true_y==0]], curve_type = curve_type)
+    x_P,  y_P = _get_density_curve_data([predicted_proba[true_y==1]], curve_type = curve_type)
+
+    # initialize figure
+    fig = make_subplots(rows=2, cols=1,
+                        vertical_spacing=0.05,
+                        shared_xaxes = True)
+    annotations={}
+    titles = {}
+
+    for threshold in threshold_values:
+
         y_pred = [int(x >= threshold) for x in predicted_proba]
-        F_beta_score = fbeta_score(true_y, y_pred, beta=beta, zero_division=0)
-        listFbeta.append(F_beta_score)
-        
-    listTr.append(None)
-    listFbeta.append(0)
-    
-    baseline = len(true_y[true_y==1]) / len(true_y)
-    
-    curve_df = pd.DataFrame({"Thresholds": listTr,
-                             "Recall":recall.tolist(),
-                             "Precision":precision.tolist(),
-                             "Fbeta":listFbeta})
-    
-    full_fig=px.line(curve_df, x="Recall", y="Precision", hover_data=["Thresholds", "Fbeta"], title=main_title)
-    
-    fbeta_hover_str = ' <br>F' + str(beta) +' score: %{customdata[1]:.4f} '
-    
-    full_fig.update_traces(hovertemplate='Threshold: %{customdata[0]:.4f} <br>Precision: %{y:.4f} <br>Recall: %{x:.4f} ' + fbeta_hover_str + '<extra></extra>')
-    
-    full_fig.update_traces(textposition="top center") 
+        cf_matrix = confusion_matrix(true_y, y_pred)
+        titles[threshold] = "TN: {0}, FP: {1}, FN: {2}, TP: {3}".format(*cf_matrix.ravel())
 
-    f_scores = np.linspace(0.2, 0.8, num=4)
-    
-    for f_score in f_scores:
-        x = np.linspace(0.01, 1)
-        y = f_score * x / (x + beta * beta * (x - f_score))
-        X = x[y >= 0]
-        listX = X.tolist()
-        Y = y[y >= 0]
-        listY = Y.tolist()
-        
-        recall_precision_df=pd.DataFrame({'recall':listX,
-                                          'precision':listY})
-               
-        iso_fig=px.line(recall_precision_df, x="recall", y="precision")
-        iso_fig.update_traces(hovertemplate=[]) # no hover info displayed but keeps dashed lines
-        iso_fig.update_traces(line_color='#4C78A8', line=dict(dash='dot'), line_width=0.8)
-        
-        full_fig.add_annotation(x=0.90, y=y[45] + 0.01, text="f"+ str(beta) + "={0:0.1f}".format(f_score),
-                                showarrow=False,yshift=10)       
+        # Select data for each confusion class
+        first_idx_N = np.searchsorted(x_N, threshold)
+        x_TN = x_N[:first_idx_N]
+        y_TN = y_N[:first_idx_N]
+        x_FP = x_N[first_idx_N:]
+        y_FP = y_N[first_idx_N:]
 
-        full_fig.add_traces(list(iso_fig.select_traces()))
-        
-    area_under_pr_curve = auc(recall, precision)
- 
-    full_fig.update_xaxes(range=[0.0, 1.0],title_text='Recall')
-    full_fig.update_yaxes(range=[0.0, 1.05],title_text='Precision')
-    
-    full_fig.add_shape(type='line', line=dict(dash='dash', color = '#20313e'),x0=0, x1=1, y0=baseline, y1=baseline)
-    
-    full_fig['data'][0]['showlegend']= True
-    full_fig['data'][1]['showlegend']= True
-    full_fig['data'][0]['name']= f'PR Curve (AUC={area_under_pr_curve:.2f})'
-    full_fig['data'][1]['name']= 'iso-f' + str(beta) + ' curves'
-    
-    full_fig.update_layout(legend=dict(yanchor="top",y=0.20,xanchor="left",x=0.01),
-                           legend_font_size=9.5, 
-                           width=550, height=550)
-    
-    full_fig.update_xaxes(showspikes=True, spikedash = 'dot', spikethickness=2)
-    full_fig.update_yaxes(showspikes=True, spikedash = 'dot', spikethickness=2)
-    full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
-    full_fig.show()
-    
-    return area_under_pr_curve
+        first_idx_P = np.searchsorted(x_P, threshold)
+        x_FN = x_P[:first_idx_P]
+        y_FN = y_P[:first_idx_P]
+        x_TP = x_P[first_idx_P:]
+        y_TP = y_P[first_idx_P:]
 
-def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characteristic Curve"):
-    
-    """
-    - Plots interactive ROC curve with plotly 
-      displayng area under the ROC curve value    
-    - Returns the value of area under the ROC curve
-    
-    Plot is constituted by: 
-    a linechart of the the ROC curve (true positive rate, or recall, against false positive rate) 
-    and a dashed baseline (representing the ROC curve of a random classifier)
+        # Add 4 density curves
+        fig.add_trace(go.Scatter(x=x_TN, y=y_TN,
+                                 mode='lines',
+                                 name='TN',
+                                 legendgroup = 'Negative',
+                                 legendgrouptitle_text = 'Negative class',
+                                 marker= {'color': '#636EFA'},
+                                 fill = 'tozeroy',
+                                 hovertemplate = "Probability: %{x:.4~}<br>Count: " + str(cf_matrix[0][0]),
+                                 visible=False
+                                ), row=1, col = 1
+                     )
 
-    Parameters
-    ----------
-    true_y: sequence of ints
-        True labels 
-    predicted_proba: sequence of floats
-        predicted probabilities for class 1
-        (e.g. output from model.predict_proba(data)[:,1]) 
-    title: str, default="Receiver Operating Characteristic Curve"
-        The main title of the plot.
+        fig.add_trace(go.Scatter(x=x_FP, y=y_FP,
+                                 mode='lines',
+                                 name='FP',
+                                 legendgroup = 'Negative',
+                                 legendgrouptitle_text = 'Negative class',
+                                 marker= {'color': '#EF553B'},
+                                 fill = 'tozeroy',
+                                 hovertemplate = "Probability: %{x:.4~}<br>Count: " + str(cf_matrix[0][1]),
+                                 visible=False
+                                ), row=1, col = 1
+                     )
 
-    Returns
-    ----------   
-    area_under_ROC_curve: float
-        value of area under the ROC curve
-    """
-    main_title = f"<b>{title}</b>"
-    
-    fpr, tpr, thresholds = roc_curve(true_y, predicted_proba)
-    
-    curve_df = pd.DataFrame({"Thresholds": thresholds.tolist(),
-                             "False Positive Rate":fpr.tolist(),
-                             "True Positive Rate":tpr.tolist()})
-    
-    fig = px.line(curve_df, 
-                  x="False Positive Rate", 
-                  y="True Positive Rate",
-                  title=main_title,
-                  hover_data=["Thresholds"],
-                  width=550, height=550)
-    
-    fig.update_traces(textposition="top center")
-    fig.update_traces(hovertemplate='Threshold: %{customdata:.4f} <br>False Positive Rate: %{x:.4f} <br>True Positive Rate: %{y:.4f}<extra></extra>')
-    
-    fig.add_shape(type="line", line=dict(dash="dash", color = '#20313e'), 
-                  x0=0, x1=1, y0=0, y1=1)
-    
-    area_under_ROC_curve = auc(fpr, tpr)
-    
-    fig["data"][0]["name"]= f"ROC Curve (AUC={area_under_ROC_curve:.3f})"
-    fig["data"][0]["showlegend"]= True
-    
-    fig.update_layout(legend = dict(yanchor="top", y=0.20, xanchor="left", x=0.5), 
-                      legend_font_size=9.5)
-    
-    fig.update_xaxes(showspikes=True, spikedash = 'dot', spikethickness=2)
-    fig.update_yaxes(showspikes=True, spikedash = 'dot', spikethickness=2)  
-    
-    fig.update_yaxes(scaleanchor="x", scaleratio=1)
-    fig.update_xaxes(range=[0,1], constrain="domain")
-    fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+        fig.add_trace(go.Scatter(x=x_FN, y=y_FN,
+                                 mode='lines',
+                                 name='FN',
+                                 legendgroup = 'Positive',
+                                 legendgrouptitle_text = 'Positive class',
+                                 marker= {'color': '#EF71D9'},
+                                 fill = 'tozeroy',
+                                 hovertemplate = "Probability: %{x:.4~}<br>Count: " + str(cf_matrix[1][0]),
+                                 visible=False
+                                ), row=2, col = 1
+                     )
 
-    fig.show()
-    
-    return area_under_ROC_curve
+        fig.add_trace(go.Scatter(x=x_TP, y=y_TP,
+                                 mode='lines',
+                                 name='TP',
+                                 legendgroup = 'Positive',
+                                 legendgrouptitle_text = 'Positive class',
+                                 marker= {'color': '#00CC96'},
+                                 fill = 'tozeroy',
+                                 hovertemplate = "Probability: %{x:.4~}<br>Count: " + str(cf_matrix[1][1]),
+                                 visible=False
+                                ), row=2, col = 1
+                     )
 
+        max_y = max(list(y_N) + list(y_P)) # needed to set y axis domain
+
+        # Add 2 threshold dotted line 
+        fig.add_trace(go.Scatter(line=dict(dash='dash', color = '#20313e'), 
+                                 x=[threshold, threshold], y=[-1, max_y*1.1],
+                                 mode='lines + text', name = 'Threshold', 
+                                 visible=False,
+                                 legendgroup = 'threshold', showlegend = False), 
+                      row = 'all', col = 1) #N.B: SINCE row = 'all' THIS WILL CREATE TWO SCATTER PLOTS (TWO FIG.DATA ENTRIES)
+
+        fig['data'][-1]['showlegend'] = True 
+
+        # Create annotation that will slide with threshold line
+        annotations[threshold] = go.layout.Annotation(text="Predicted Negative        Predicted Positive",
+                                                      y=0.5,
+                                                      yref = "paper",
+                                                      x=threshold,
+                                                      visible=True,
+                                                      font=dict(size=14),
+                                                      showarrow=False) 
+
+
+    # Create label for each quadrant
+    TN_annotation = go.layout.Annotation(text="TN",
+                                         y=0.97, yref = "y domain", x=0.025,
+                                         visible=True,
+                                         font=dict(size=14),
+                                         showarrow=False) 
+
+    FP_annotation = go.layout.Annotation(text="FP",
+                                         y=0.97, yref = "y domain", x=0.975,
+                                         visible=True,
+                                         font=dict(size=14),
+                                         showarrow=False)
+
+    FN_annotation = go.layout.Annotation(text="FN",
+                                         y=0.97, yref = "y2 domain", x=0.025,
+                                         visible=True,
+                                         font=dict(size=14),
+                                         showarrow=False) 
+
+    TP_annotation = go.layout.Annotation(text="TP",
+                                         y=0.97, yref = "y2 domain",
+                                         x=0.975,
+                                         visible=True,
+                                         font=dict(size=14),
+                                         showarrow=False) 
+
+    fig.data[0].visible = True   # first TN density curve
+    fig.data[1].visible = True   # first FP density curve
+    fig.data[2].visible = True   # first FN density curve
+    fig.data[3].visible = True   # first TP density curve
+    fig.data[4].visible = True   # first threshold vertical line (positive class subplot)
+    fig.data[5].visible = True   # first threshold vertical line (negative class subplot)
+
+    steps = []
+    j = 0   # figure.data count
+
+    for threshold in threshold_values:
+
+        # Select annotations to be shown for each step: 
+        # the correct annotation relative to the threshold line and the quadrant label (if there is enough space)
+        if threshold > 0.96:
+            annotation_list = [annotations[threshold], TN_annotation, 
+                                                       FN_annotation]
+        elif threshold < 0.04:
+            annotation_list = [annotations[threshold], FP_annotation, 
+                                                       TP_annotation]
+        else:
+            annotation_list = [annotations[threshold], TN_annotation, FP_annotation, 
+                                                       FN_annotation, TP_annotation]    
+        # Create slider step
+        step = dict(method="update",
+                    args=[{"visible": [False] * len(fig.data)},
+                          {"title": dict(text = main_title + '<span style="font-size: 13px;">' \
+                                                + titles[threshold] + '</span>', 
+                                         y = 0.965, yanchor = 'bottom'),
+                          "annotations": annotation_list}
+                         ],
+                    label = str(round(threshold, n_of_decimals))
+                   )
+
+        step["args"][0]["visible"][j] = True     # TN density curve
+        step["args"][0]["visible"][j+1] = True   # FP density curve
+        step["args"][0]["visible"][j+2] = True   # FN density curve
+        step["args"][0]["visible"][j+3] = True   # TP density curve
+        step["args"][0]["visible"][j+4] = True   # threshold vertical line (positive class subplot)
+        step["args"][0]["visible"][j+5] = True   # threshold vertical line (positive class subplot)
+
+        steps.append(step)
+        j += 6                                   # add 6 to trace index (4 linechart, 2 threshold lines)
+
+    # Define slider
+    sliders = [dict(active=0,
+                    currentvalue={"prefix": "Threshold: "},
+                    pad=dict(t= 50),
+                    steps=steps)]
+
+    fig.update_layout(height=800,
+                      margin=dict(t=80),
+                      sliders=sliders,
+                      annotations = [annotations[threshold_values[0]], FP_annotation, TP_annotation], #first visble annotations
+                      title = dict(text = main_title + '<span style="font-size: 13px;">' \
+                                          + titles[threshold_values[0]] + '</span>', 
+                                   y = 0.965, yanchor = 'bottom'))                                    #first visible title
+
+    # Axis layout
+    fig.update_layout(xaxis2_title_text = 'Probabilities',
+                      xaxis_range=[0, 1], 
+                      yaxis1_title_text = 'Actual Negatives',
+                      yaxis2_title_text = 'Actual Positives',
+                      yaxis1_range=[0, max_y*1.1], yaxis2_range=[0, max_y*1.1])
+
+    fig.show(config = dict(displayModeBar = show_display_modebar))
 
 def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01, 
                           amounts = None, cost_dict = None, optimize_threshold = None, 
                           N_subsets = 70, subsets_size = 0.2, with_replacement = False,
-                          currency = '€', random_state = None, title = 'Interactive Confusion Matrix'):
+                          currency = '€', random_state = None, 
+                          title = 'Interactive Confusion Matrix', show_display_modebar = True):
     
     """ 
     Plots interactive and customized confusion matrix with plotly, 
@@ -365,7 +615,7 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
 
     Parameters
     ----------
-    true_y: sequence of ints
+    true_y: sequence of ints (0 or 1)
         True labels 
     predicted_proba: sequence of floats
         predicted probabilities for class 1
@@ -401,6 +651,8 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
         Controls the randomness of the bootstrapping of the samples when optimizing thresholds with GHOST method
     title: str, default='Interactive Confusion Matrix'
         The main title of the plot.
+    show_display_modebar: bool, default=True
+        Determines wether plotly displayModeBar will be shown
     
     """
     if currency == '$': #correct dollar symbol for plotly in its HTML code
@@ -563,13 +815,13 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
     
     fig.update_xaxes(title_text = "Predicted")
     fig.update_yaxes(title_text = "Actual")
-    fig.show()
+    fig.show(config = dict(displayModeBar = show_display_modebar))
     
     return metrics_dep_on_threshold_df, constant_metrics_df, optimal_thresholds_df
 
 def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01, 
                              amounts = None, cost_dict = None, currency = '€',
-                             title = 'Interactive Confusion Line Chart'):
+                             title = 'Interactive Confusion Line Chart', show_display_modebar = True):
     
     """
     - Plots interactive and customized line-plots with plotly, one for each "confusion class" (TN, FP, FN, TP), 
@@ -585,7 +837,7 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
 
     Parameters
     ----------
-    true_y: sequence of ints
+    true_y: sequence of ints (0 or 1)
         True labels 
     predicted_proba: sequence of floats
         predicted probabilities for class 1
@@ -606,6 +858,8 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
         (eg. Indian rupee: '&#8377;')
     title: str, default='Interactive Confusion Line Chart'
         The main title of the plot.
+    show_display_modebar: bool, default=True
+        Determines wether plotly displayModeBar will be shown
         
     Returns
     ----------   
@@ -672,9 +926,9 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
         for confusion_index, row_index, col_index, color1, color2 in zip(['TN', 'FP', 'FN', 'TP'],
                                                                          [1, 1, 2, 2],
                                                                          [1, 2, 1, 2],
-                                                                         ['blue', 'red', '#00CC96', '#AB63FA'],
+                                                                         ['blue', 'red', '#EF71D9', '#00CC96'],
                                                                          ['rgb(128, 177, 211)', 'rgb(251, 128, 114)', 
-                                                                          'rgb(141, 211, 199)', 'rgb(190, 186, 218)']):
+                                                                          'rgb(220, 186, 218)', 'rgb(141, 211, 199)']):
             fig.add_trace(
                 go.Scatter(x = amount_cost_df['threshold'],
                            y = amount_cost_df['amount_' + confusion_index],
@@ -743,8 +997,8 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
                                                [1, 2, 1, 2],
                                                middle_y_lst, 
                                                unit_y_lst, 
-                                               ['blue', 'red','#00CC96', '#AB63FA'],
-                                               ['rgb(128, 177, 211)', 'rgb(251, 128, 114)', 'rgb(141, 211, 199)', 'rgb(190, 186, 218)']):
+                                               ['blue', 'red', '#EF71D9', '#00CC96'],
+                                               ['rgb(128, 177, 211)', 'rgb(251, 128, 114)', 'rgb(220, 186, 218)', 'rgb(141, 211, 199)']):
 
                 y_point_amount, y_point_cost = float(amount_cost_row['amount_' + confusion_index]), float(amount_cost_row['cost_' + confusion_index])     
 
@@ -777,8 +1031,8 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
                                mode = 'markers+text',
                                texttemplate = "amount: " + currency + "%{y}",
                                textposition = [textposition_amount],
-                               hovertemplate = currency +'%{y}',
-                               name = str(threshold),
+                               hoverlabel = dict(bgcolor = 'rgb(68, 68, 68)'),
+                               hovertemplate = '%{x:.' + str(n_of_decimals) + 'f}<extra></extra>',
                                marker = dict(color=color1),
                                marker_size = 8,
                                visible=False),
@@ -791,8 +1045,8 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
                                mode = 'markers+text',
                                texttemplate = "cost: " + currency + "%{y}",
                                textposition = [textposition_cost],
-                               hovertemplate = currency +'%{y}',
-                               name = str(threshold),
+                               hoverlabel = dict(bgcolor = 'rgb(68, 68, 68)'),
+                               hovertemplate = '%{x:.' + str(n_of_decimals) + 'f}<extra></extra>',
                                marker = dict(color=color2),
                                marker_size = 8,
                                visible=False),
@@ -816,7 +1070,7 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
                                                                 [1, 1, 2, 2],
                                                                 [1, 2, 1, 2],
                                                                 ['blue', 'red', 
-                                                                 '#00CC96', '#AB63FA']): 
+                                                                 '#EF71D9', '#00CC96']): 
             fig.add_trace(
                 go.Scatter(x = amount_cost_df['threshold'],
                            y = amount_cost_df[confusion_index],
@@ -844,7 +1098,7 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
                                                                               [1, 1, 2, 2],
                                                                               [1, 2, 1, 2],
                                                                               middle_y_lst,
-                                                                              ['blue', 'red', '#00CC96', '#AB63FA']):            
+                                                                              ['blue', 'red', '#EF71D9', '#00CC96']):            
 
                 y_point = float(amount_cost_row[confusion_index])
                 
@@ -860,8 +1114,9 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
                                mode = 'markers+text',
                                texttemplate = var_to_plot + ": " + currency + "%{y}",
                                textposition = textposition,
-                               hovertemplate = currency +'%{y}',
-                               name = str(threshold),
+                               hoverlabel = dict(bgcolor = 'rgb(68, 68, 68)'),
+                               hovertemplate = '%{x:.' + str(n_of_decimals) + 'f}<extra></extra>',
+                               name = str(round(threshold, n_of_decimals)),
                                marker=dict(color=color),
                                marker_size = 8,
                                visible=False),
@@ -919,14 +1174,19 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
     fig.update_yaxes(title_text="Amount/Cost", title_font_size=12, row=1, col=1)
     fig.update_yaxes(title_text="Amount/Cost", title_font_size=12, row=2, col=1)
 
-    fig.show()
+    fig.show(config = dict(displayModeBar = show_display_modebar))
     
-    return amount_cost_df, round(tot_amount, 2)
+    try:
+        tot_amount = round(tot_amount, 2)
+    except:
+        tot_amount = None    
+        
+    return amount_cost_df, tot_amount
 
 def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
                            amounts = None, cost_dict = None,
                            amount_classes = 'all', cost_classes = 'all', currency = '€',
-                           title = 'Interactive Amount-Cost Line Chart'):
+                           title = 'Interactive Amount-Cost Line Chart', show_display_modebar = True):
     
     """
     - Plots an interactive and customized line-plot with plotly, 
@@ -940,7 +1200,7 @@ def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
 
     Parameters
     ----------
-    true_y: sequence of ints
+    true_y: sequence of ints (0 or 1)
         True labels 
     predicted_proba: sequence of floats
         predicted probabilities for class 1
@@ -966,6 +1226,8 @@ def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
         (eg. Indian rupee: '&#8377;')
     title: str, default='Interactive Amount-Cost Line Chart'
         The main title of the plot.
+    show_display_modebar: bool, default=True
+        Determines wether plotly displayModeBar will be shown
 
     Returns
     ----------   
@@ -1094,8 +1356,10 @@ def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
     fig.update_xaxes(title_text="Threshold")
     fig.update_yaxes(title_text="Amount/Cost")
     
-    fig.show()
+    fig.show(config = dict(displayModeBar = show_display_modebar))
     
     return amount_cost_df[['threshold'] + col_lst]
+
+
 
                    
