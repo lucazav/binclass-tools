@@ -7,6 +7,8 @@ import warnings
 
 from sklearn import metrics
 
+import plotly.figure_factory as ff 
+
 def get_cost_dict(TN = 0, FP = 0, FN = 0, TP = 0):
     
     """ 
@@ -366,3 +368,31 @@ def _get_cost_matrix(true_y, predicted_proba, threshold, cost_dict):
     cost_matrix = np.array([[cost_TN, cost_FP],
                             [cost_FN, cost_TP]])
     return cost_matrix
+
+def _get_density_curve_data(data, curve_type = 'kde'):
+    
+    """ 
+    Compute distribution data using plotly figure_factory distplot, to plot custom interactive density curve: 
+
+    Parameters
+    ----------
+    data: list containing a sequence of floats
+        data of which the density curve will be computed
+        e.g. list([0.5, 0.8, 0.6]) or [np.array([2.0, 5.8, 0.0])]  
+    curve_type: {'kde', 'normal'},  default=kde 
+        type of curve, either kernel density estimation or normal curve
+    
+    Returns
+    ----------
+    x_dist_data: np.array
+         array with x coordinates data for the density curve 
+    y_dist_data: np.array
+         array with y coordinates data for the density curve
+    """
+  
+    fig = ff.create_distplot(data, ['data'], show_hist=False, show_rug=False, curve_type=curve_type)
+    
+    x_dist_data = np.array(fig['data'][0]['x'])
+    y_dist_data = np.array(fig['data'][0]['y'])
+    
+    return x_dist_data, y_dist_data
