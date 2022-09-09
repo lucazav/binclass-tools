@@ -91,6 +91,7 @@ train_predicted_proba = cls.predict_proba(X_train)[:,1]
 test_predicted_proba = cls.predict_proba(X_test)[:,1] 
 ```
 Let's generate some known graphs with the functions in the binclass-tools package to check the overall behavior of the model on the test set.
+Note that it's possible to customize the main title and choose whether to display the plotly bar mode through the parameters 'title' and 'show_display_modebar' in every graphical function of this library.
 
 We can start by visualizing the _Receiver Operating Characteristic (ROC) Curve_, using the following function, which also returns the value of the area under the curve:
 
@@ -147,6 +148,22 @@ Here the interactive plot generated:
 
 ![Interactive Probabilities Violin Plot for the Test Set](/resources/images/03-interactive-violin-plot-test.png)
 
+Another useful tool to visualize the probabilities density is the predicted_proba_density_curve_plot function, that plots for each true class either the kernel density estimation curve (default) or the normal distribution curve, depending on the curve_type parameter. For each threshold, that can be selected through a slider, we can see the regions that are correctly or incorrectly classified:
+
+```python
+threshold_step = 0.05
+curve_type = 'kde' #'kde' is the default value, can also be set to 'normal'
+
+bc.predicted_proba_density_curve_plot(true_y = y_test, 
+                                      predicted_proba = test_predicted_proba, 
+                                      threshold_step = threshold_step,
+                                      curve_type = curve_type)
+```
+
+Here the interactive plot:
+
+![Interactive Probabilities Density Plot for the Test Set](/resources/images/04-interactive-density-plot-test.png)
+
 Afterwards, we can conduct a more detailed threshold-related analysis of the model's performance.
 Let's set up a set of variables to pass as parameters in the subsequent binclass-tools functions we will use. 
 Considering that we are going to do first an analysis of how the model performs on the training dataset in order to get also the optimal threshold values, these are the variables we will calculate:
@@ -196,7 +213,7 @@ var_metrics_df, invar_metrics_df, opt_thresh_df = bc.confusion_matrix_plot(
 
 Here the output:
 
-![Interactive Confusion Matrix for the Training Set](/resources/images/04-interactive-confusion-matrix-train.png)
+![Interactive Confusion Matrix for the Training Set](/resources/images/05-interactive-confusion-matrix-train.png)
 
 As you can see, the interactive confusion matrix plot also returns metric dataframes that can be used in your code if needed. One is the _threshold dependent metrics dataframe_:
 
@@ -273,7 +290,7 @@ var_metrics_df, invar_metrics_df, __ = bc.confusion_matrix_plot(
 
 Evidently, the Interactive Confusion Matrix plot will not present the table of optimal threshold values for the various metrics:
 
-![Interactive Confusion Matrix for the Test Set](/resources/images/05-interactive-confusion-matrix-test.png)
+![Interactive Confusion Matrix for the Test Set](/resources/images/06-interactive-confusion-matrix-test.png)
 
 As you can see from the code, this time the dataframes returned are only the first two.
 
@@ -370,7 +387,7 @@ amount_cost_df, total_amount = bc.confusion_linechart_plot(
 
 Here the output:
 
-![Interactive Confusion Line Chart](/resources/images/06-interactive-confusion-line-chart.png)
+![Interactive Confusion Line Chart](/resources/images/07-interactive-confusion-line-chart.png)
 
 You can see that there are also black "diamonds" indicating the first threshold value in which there is a swap of the amount and cost curves. The curve swapping points can also be more than one.
 
@@ -442,7 +459,7 @@ total_cost_amount_df = bc.total_amount_cost_plot(
 
 Here the resulting plot:
 
-![Interactive Amount-Cost Line Chart](/resources/images/07-interactive-amount-cost-line-chart.png)
+![Interactive Amount-Cost Line Chart](/resources/images/08-interactive-amount-cost-line-chart.png)
 
 As in the other cases, this function returns a dataframe with the amount and cost values, both for each category in the confusion matrix and for selected aggregates of them, associated with each threshold:
 
