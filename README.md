@@ -91,7 +91,7 @@ train_predicted_proba = cls.predict_proba(X_train)[:,1]
 test_predicted_proba = cls.predict_proba(X_test)[:,1] 
 ```
 Let's generate some known graphs with the functions in the binclass-tools package to check the overall behavior of the model on the test set.
-Note that it's possible to customize the main title and choose whether to display the plotly bar mode through the parameters 'title' and 'show_display_modebar' in every graphical function of this library.
+Note that it's possible to customize the main title and choose whether to display the plotly bar mode through the parameters *title* and *show_display_modebar* in every graphical function of this library.
 
 We can start by visualizing the _Receiver Operating Characteristic (ROC) Curve_, using the following function, which also returns the value of the area under the curve:
 
@@ -115,7 +115,7 @@ Next, you can visualize the _Precision-Recall (PR) Curve_ plot with the iso-Fbet
 First, let's recall the definition of the F-beta score: it is the weighted harmonic mean of precision and recall, reaching its optimal value at 1 and its worst value at 0.
 The beta parameter determines the weight of recall in the combined score. beta < 1 lends more weight to precision, while beta > 1 favors recall.
 An iso-Fbeta curve thus contains, by definition, all points in the precision-recall space whose F-beta scores are equal. 
-The function *curve_PR_plot* allows us to display ISO curves associated with F-beta score values of 0.2, 0.4, 0.6 and 0.8. The function takes as input the beta parameter (set to 1 as default value):
+The function `curve_PR_plot` allows us to display ISO curves associated with F-beta score values of 0.2, 0.4, 0.6 and 0.8. The function takes as input the beta parameter (set to 1 as default value):
 
 ```python
 area_under_PR = bc.curve_PR_plot(true_y= y_test, 
@@ -148,7 +148,7 @@ Here the interactive plot generated:
 
 ![Interactive Probabilities Violin Plot for the Test Set](/resources/images/03-interactive-violin-plot-test.png)
 
-Another useful tool to visualize the probabilities density is the predicted_proba_density_curve_plot function, that plots for each true class either the kernel density estimation curve (default) or the normal distribution curve, depending on the curve_type parameter. For each threshold, that can be selected through a slider, we can see the regions that are correctly or incorrectly classified:
+Another useful tool to visualize the probabilities density is the `predicted_proba_density_curve_plot` function, that plots for each true class either the kernel density estimation curve (default) or the normal distribution curve, depending on the *curve_type* parameter. For each threshold, that can be selected through a slider, we can see the regions that are correctly or incorrectly classified:
 
 ```python
 threshold_step = 0.05
