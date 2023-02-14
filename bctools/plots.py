@@ -3,22 +3,567 @@
 
 import numpy as np
 import pandas as pd
+import math
 
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, fbeta_score, confusion_matrix
+from sklearn.base import is_classifier
+from sklearn.calibration import calibration_curve
 
-import plotly.graph_objects as go
+from plotly import graph_objs as go
 import plotly.express as px 
 from plotly.subplots import make_subplots
 
 from .utilities import _get_amount_matrix, _get_cost_matrix, _get_density_curve_data
-from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df
+from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df, get_gain_curve_data
 
 from .thresholds import get_optimized_thresholds_df
 
-def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall Curve", show_display_modebar = True):
+def calibration_curve_plot(true_y, predicted_proba,
+                           n_bins = 10,
+                           strategy = 'uniform',
+                           title = "Calibration Curve"):
     
     """
-    - Plots interactive Precision-Recall curve with plotly 
+    Returns calibration curve figure (plotly oject) using true labels and predicted probabilities.
+
+    Calibration curve, also known as reliability diagram, uses inputs
+    from a binary classifier and plots the average predicted probability
+    for each bin against the fraction of positive classes, on the
+    y-axis.
+     
+    Plot is constituted by: 
+    - a linechart of the Calibration curve, 
+    - a dashed line (representing the Calibration curve of a perfectly calibrated classifier) 
+    
+    Parameters
+    ----------
+    true_y: sequence of ints
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    n_bins: int, default=10
+        Number of bins to discretize the [0, 1] interval into when
+        calculating the calibration curve. A bigger number requires more
+        data.
+    strategy: {'uniform', 'quantile'}, default='uniform'
+        Strategy used to define the widths of the bins.
+        - 'uniform': The bins have identical widths.
+        - 'quantile': The bins have the same number of samples and depend
+          on predicted probabilities.
+    title: str, default="Calibration Curve"
+        The main title of the plot.
+        
+    Returns
+    ----------   
+    full_fig: plotly figure
+    """
+    main_title = f"<b>{title}</b>"
+    
+    prob_true, prob_predicted = calibration_curve(true_y, predicted_proba, n_bins=n_bins, strategy=strategy)
+
+    curve_df = pd.DataFrame({"Mean predicted probability": prob_predicted,
+                             "Fraction of positives": prob_true})
+        
+    full_fig=px.line(curve_df, x="Mean predicted probability", y="Fraction of positives",
+                     title=main_title)
+    
+    full_fig.update_traces(name = "Calibration curve")
+    
+    #add baseline
+    full_fig.add_trace(go.Scatter(line=dict(dash='dash', color = '#20313e'), 
+                                  x=[-1, 2], y=[-1, 2], 
+                                  mode='lines', name = "Perfectly calibrated"))
+          
+    full_fig.update_xaxes(range=[0.0, 1.03])
+    full_fig.update_yaxes(range=[0.0, 1.03])
+    
+    full_fig['data'][0]['showlegend']= True  #calib curve
+    
+    full_fig.update_layout(legend=dict(yanchor="bottom", y=0.05, xanchor="right", x=0.95),
+                           legend_font_size=9, 
+                           width=550, height=550)
+    
+    full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+    
+    return full_fig
+    
+def calibration_plot_from_models(X, true_y, estimators,
+                                 estimator_names = None,
+                                 strategy = 'uniform',
+                                 n_bins = 10, 
+                                 pos_label = None,
+                                 title = "Calibration Curves"):
+    
+    """
+    Returns calibration curves and probabilities histograms figures (plotly ojects) using true labels and estimators.
+     
+    Two plots will be returned. First plot is constituted by: 
+    - linecharts of the Calibration curve (one for each estimator passed as input), 
+    - a dashed line (representing the Calibration curve of a perfectly calibrated classifier)
+    
+    Second plot:
+    - histograms (one for each estimator passed as input) showing the distribution of the predicted probabilites
+
+    Parameters
+    ----------
+    X: array-like, sparse matrix of shape (n_samples, n_features)
+        Input values.
+    true_y: array-like of shape (n_samples,)
+        True labels 
+    estimators: estimator instance or list of estimator instances
+        Fitted classifier or a fitted :class:`~sklearn.pipeline.Pipeline`
+        in which the last estimator is a classifier. The classifier must
+        have a :term:`predict_proba` method.
+    estimator_names: str or list of str
+        Estimator labels (used as plot labels)
+    pos_label: str or int, default=None
+        The positive class when computing the calibration curves.
+        By default, `estimators.classes_[1]` is considered as the
+        positive class.   
+    n_bins: int, default=10
+        Number of bins to discretize the [0, 1] interval into when
+        calculating the calibration curve. A bigger number requires more
+        data.   
+    strategy: {'uniform', 'quantile'}, default='uniform'
+        Strategy used to define the widths of the bins.
+        - 'uniform': The bins have identical widths.
+        - 'quantile': The bins have the same number of samples and depend
+          on predicted probabilities.
+    title: str, default="Calibration Curves"
+        The main title of the plot.
+        
+    Returns
+    ----------   
+    linecharts_fig: plotly figure 
+    histograms_fig: plotly figure 
+    """
+    
+    if isinstance(estimators, (list, tuple)):
+        for estimator in estimators:
+            if not is_classifier(estimator):
+                raise ValueError("'estimators' should be a fitted classifier or a list of fitted classifiers.")
+    else:
+        if not is_classifier(estimators):
+                raise ValueError("'estimators' should be a fitted classifier or a list of fitted classifiers.")
+        else: 
+            estimators = [estimators]
+            if isinstance(estimator_names, (str)):
+                estimator_names = [estimator_names]
+                
+    if isinstance(estimator_names, (list, tuple)):
+        if not len(estimator_names) == len(estimators):
+            raise ValueError(f"{len(estimators)} estimators found in input but 'estimator_names' has {len(estimator_names)} labels.")
+    
+    elif estimator_names is None:
+        estimator_names = []
+        for estimator in estimators:
+            estimator_names.append(estimator.__class__.__name__)
+            
+    elif isinstance(estimator_names, (str)):
+        raise ValueError("'estimator_names' should be a list/tuple of strings of same lenght of estimators.")
+        
+    else:
+        raise ValueError("'estimator_names' should be a string or a list/tuple of strings of same lenght of estimators.")
+                
+    n_estimators = len(estimators)
+    n_hist_rows = math.ceil(n_estimators/2) 
+        
+    main_title = f"<b>{title}</b>"
+    
+    histograms_fig = make_subplots(rows=n_hist_rows, cols=2,
+                                   subplot_titles = estimator_names)
+    
+    hist_grid_index = []
+    for i in range(1, n_hist_rows+1):  #start from row indexed 2
+        hist_grid_index.append([i,1])
+        hist_grid_index.append([i,2])
+        
+    color_list = px.colors.qualitative.Plotly
+    
+    linecharts_fig = go.Figure()
+    linecharts_fig.add_trace(go.Scatter(x=[-1, 2], y=[-1, 2],
+                                        mode='lines',
+                                        name="Perfectly calibrated",
+                                        line= {'color': '#20313e', 'dash': 'dash'},
+                                       ))
+    grid_pos = 0
+    
+    for estimator, estimator_name in zip(estimators, estimator_names):
+        predicted_proba = estimator.predict_proba(X)
+        
+        if pos_label is not None:
+            try:
+                class_idx = estimator.classes_.tolist().index(pos_label)
+            except ValueError as e:
+                raise ValueError(
+                    "The class provided by 'pos_label' is unknown. Got "
+                    f"{pos_label} instead of one of {set(estimator.classes_)}"
+                ) from e
+        else:
+            class_idx = 1
+            pos_label = estimator.classes_[class_idx]
+            
+        predicted_proba = predicted_proba[:, class_idx]
+        prob_true, prob_predicted = calibration_curve(true_y, predicted_proba, n_bins=n_bins, strategy=strategy)
+        
+        linecharts_fig.add_trace(go.Scatter(x=prob_predicted, y=prob_true, 
+                                            mode='lines',
+                                            line_color = color_list[grid_pos],
+                                            name = estimator_name
+                                           ))
+        
+        histograms_fig.add_trace(go.Histogram(x=predicted_proba,
+                                              nbinsx=n_bins,
+                                              showlegend = False,
+                                              marker_color = color_list[grid_pos]
+                                             ), 
+                                 row=hist_grid_index[grid_pos][0], col = hist_grid_index[grid_pos][1])
+        grid_pos += 1
+    
+    histograms_fig.update_xaxes(range=[0.0, 1], title = "Predicted probability")
+    histograms_fig.update_yaxes(title = "Count")
+        
+    linecharts_fig.update_xaxes(range=[0.0, 1.03], title = "Mean predicted probability")
+    linecharts_fig.update_yaxes(range=[0.0, 1.03], title = "Fraction of positives")
+    
+    histograms_fig.update_layout(title = f"<b>{'Predicted probability distribution'}</b>", title_font = dict(size=18))
+    
+    linecharts_fig.update_layout(title =  main_title, margin = dict(b=40))
+    
+    histograms_fig.update_layout(font=dict(size=9))
+    histograms_fig.update_layout(height=270*n_hist_rows)
+    
+    return linecharts_fig, histograms_fig
+
+    
+def cumulative_gain_plot(true_y, full_predicted_proba,
+                         pos_label = None,
+                         title = "Cumulative Gain Curve"):
+
+    """
+    Generates the Cumulative Gains curve figure (plotly oject) using true labels and predicted probabilities.
+
+    Plot is constituted by: 
+    - linecharts of the Cumulative Gains curve (one for each class), 
+    - a dashed line (representing the baseline) 
+    
+    Parameters
+    ---------- 
+    true_y: sequence of ints
+        True labels 
+    full_predicted_proba: array-like of floats of dimension (n_samples, 2) 
+        predicted probabilities for both classes
+        (e.g. output from model.predict_proba(data)) 
+    pos_label: str or int, default=None
+        The positive class associated to full_predicted_proba[:,1].
+        By default, `np.unique(true_y)[1]` is considered as the
+        positive class
+    title: str, default="Cumulative Gain Curve"
+        The main title of the plot.
+        
+    Returns
+    ----------   
+    full_fig: plotly figure
+    """
+    
+    main_title = f"<b>{title}</b>"
+    
+    true_y, full_predicted_proba = np.asarray(true_y), np.asarray(full_predicted_proba)
+
+    classes = np.unique(true_y)
+    
+    if len(classes) != 2:
+        raise ValueError('Cannot calculate Cumulative Gain Curve for data with '
+                         '{} category/ies'.format(len(classes)))
+    
+    if pos_label is not None:
+        if pos_label not in classes:
+            raise ValueError(
+                "The class provided by 'pos_label' is unknown. Got "
+                f"{pos_label} instead of one of {set(np.unique(true_y))}")
+    else:
+        pos_label = classes[1]
+    
+    for class_label in classes:
+        if class_label != pos_label:
+            neg_label = class_label
+            
+    print(f'Class {neg_label} is associated with probabilities: full_predicted_proba[:, 0]')
+    print(f'Class {pos_label} is associated with probabilities: full_predicted_proba[:, 1]')
+    
+    percentages, gains1 = get_gain_curve_data(true_y, full_predicted_proba[:, 0],
+                                              neg_label)
+    percentages, gains2 = get_gain_curve_data(true_y, full_predicted_proba[:, 1],
+                                              pos_label)
+        
+    full_fig=go.Figure(go.Scatter(x = percentages, y = gains1,
+                                  mode='lines',
+                                  name='Class {}'.format(neg_label),
+                                 ))
+    
+    full_fig.add_trace(go.Scatter(x = percentages, y = gains2,
+                                  mode='lines',
+                                  name='Class {}'.format(pos_label),
+                                 ))
+    #add baseline
+    full_fig.add_trace(go.Scatter(x=[-1, 2], y=[-1, 2],
+                                  mode='lines',
+                                  name="Baseline",
+                                  line= {'color': '#20313e', 'dash': 'dash'},
+                                 ))
+  
+    full_fig.update_xaxes(range=[0.0, 1.03], title = 'Percentage of sample')
+    full_fig.update_yaxes(range=[0.0, 1.03], title = 'Gain')
+    
+    full_fig.update_layout(legend=dict(yanchor="bottom", y=0.05, xanchor="right", x=0.95),
+                           legend_font_size=9, 
+                           width=550, height=550,
+                           title =  main_title)
+    
+    full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+    
+    return full_fig
+    
+def lift_curve_plot(true_y, full_predicted_proba,
+                    pos_label = None,
+                    title = "Lift Curve"):
+    
+    """
+    Generates the Lift Curve figure (plotly oject) from labels and probabilities
+    The lift curve is used to determine the effectiveness of a
+    binary classifier. 
+    
+    Plot is constituted by: 
+    - linecharts of the Lift curve (one for each class), 
+    - a dashed line (representing the baseline) 
+    
+    Parameters
+    ---------- 
+    true_y: array-like, shape (n_samples)
+        True labels 
+    full_predicted_proba: array-like of floats of dimension (n_samples, n_classes) = (n_samples, 2)
+        predicted probabilities for both classes
+        (e.g. output from model.predict_proba(data)) 
+    pos_label: str or int, default=None
+        The positive class associated to full_predicted_proba[:,1].
+        By default, `np.unique(true_y)[1]` is considered as the
+        positive class. 
+    title: str, default="Lift Curve"
+        The main title of the plot.
+        
+    Returns
+    ----------   
+    full_fig: plotly figure
+    """
+    
+    main_title = f"<b>{title}</b>"
+
+    true_y = np.array(true_y)
+    full_predicted_proba = np.array(full_predicted_proba)
+    
+    classes = np.unique(true_y)
+    
+    if len(classes) != 2:
+        raise ValueError('Cannot calculate Lift Curve for data with '
+                         '{} category/ies'.format(len(classes)))
+    
+    if pos_label is not None:
+        if pos_label not in classes:
+            raise ValueError(
+                "The class provided by 'pos_label' is unknown. Got "
+                f"{pos_label} instead of one of {set(np.unique(true_y))}")
+    else:
+        pos_label = classes[1]
+    
+    for class_label in classes:
+        if class_label != pos_label:
+            neg_label = class_label
+            
+    print(f'Class {neg_label} is associated with probabilities: full_predicted_proba[:, 0]')
+    print(f'Class {pos_label} is associated with probabilities: full_predicted_proba[:, 1]')
+    
+    percentages, gains1 = get_gain_curve_data(true_y, full_predicted_proba[:, 0],
+                                              neg_label)
+    percentages, gains2 = get_gain_curve_data(true_y, full_predicted_proba[:, 1],
+                                              pos_label)
+
+    percentages = percentages[1:]
+    gains1 = gains1[1:]
+    gains2 = gains2[1:]
+
+    gains1 = gains1 / percentages
+    gains2 = gains2 / percentages
+    
+    full_fig=go.Figure(go.Scatter(x = percentages, y = gains1,
+                                  mode='lines',
+                                  name='Class {}'.format(neg_label),
+                                 ))
+    
+    full_fig.add_trace(go.Scatter(x = percentages, y = gains2,
+                                  mode='lines',
+                                  name='Class {}'.format(pos_label),
+                                 ))
+    #add baseline
+    full_fig.add_trace(go.Scatter(x=[0, 2], y=[1, 1],
+                                  mode='lines',
+                                  name="Baseline",
+                                  line= {'color': '#20313e', 'dash': 'dash'},
+                                 ))
+        
+    full_fig.update_xaxes(title = 'Percentage of sample')
+    full_fig.update_yaxes(title = 'Lift')
+    
+    full_fig.update_layout(legend=dict(yanchor="top", y=0.95, xanchor="right", x=0.95),
+                           legend_font_size=9, 
+                           width=550, height=550,
+                           title =  main_title)
+    
+    full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+    
+    return full_fig
+
+def response_curve_plot(true_y, predicted_proba, n_tiles = 10,
+                        title = "Response Curve"):
+    
+    """
+    Generates the Response Curve figure (plotly oject) from labels and predicted probabilities.
+    
+    Plot is constituted by: 
+    - linecharts of the Response curve, 
+    - a dashed line (representing the percentage of positives in the whole set) 
+    
+    Parameters
+    ---------- 
+    true_y: array-like, shape (n_samples)
+        True labels 
+    predicted_proba: array-like of floats of dimension (n_samples)
+        predicted probabilities for target class
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    n_tiles: int, default 10
+        The number of splits to compute probability bins
+        (10 is called deciles, 100 is called percentiles and any other value is an ntile)
+    title: str, default="Response Curve"
+        The main title of the plot.
+        
+    Returns
+    ----------   
+    full_fig: plotly figure
+    """
+    
+    main_title = f"<b>{title}</b>"
+
+    true_y = np.array(true_y)
+    predicted_proba_df = pd.DataFrame(np.array(predicted_proba))
+    n = len(true_y)
+    baseline_perc = np.count_nonzero(true_y == 1) / n
+    
+    prob_plus_smallrand = predicted_proba_df + (np.random.uniform(size = (n, 1)) / 1000000)
+    #prob_plus_smallrand = (prob_plus_smallrand-np.min(prob_plus_smallrand))/(np.max(prob_plus_smallrand)-np.min(prob_plus_smallrand))
+    prob_plus_smallrand = np.array(prob_plus_smallrand[0]) # cast to a 1 dimension thing
+    
+    tiles_df = n_tiles - pd.DataFrame(pd.qcut(prob_plus_smallrand, n_tiles, labels = False), columns = ['tiles'])
+    tiles_df['true_y'] = true_y
+    tiles_df['all'] = 1
+    
+    tiles_agg_df = []
+    tiles_agg_df = pd.DataFrame(index=range(1, n_tiles + 1, 1))
+    tiles_agg_df['ntile'] = range(1, n_tiles + 1, 1)
+    tiles_agg_df['tot'] = tiles_df[['tiles', 'all']].groupby('tiles').agg('sum')
+    tiles_agg_df['pos'] = tiles_df[['tiles', 'true_y']].groupby('tiles').agg('sum')
+    tiles_agg_df['pct'] = tiles_agg_df.pos / tiles_agg_df.tot
+    
+    full_fig=go.Figure(go.Scatter(x = tiles_agg_df['ntile'], y = tiles_agg_df['pct'],
+                                  mode='lines',
+                                  name='Response Curve',
+                                 ))
+        
+    baseline_perc = np.count_nonzero(true_y == 1) / len(true_y)
+    full_fig.add_trace(go.Scatter(x = tiles_agg_df['ntile'], y = [baseline_perc]*len(tiles_agg_df['ntile']),
+                                  mode='lines',
+                                  name="Baseline",
+                                  line= {'color': '#20313e', 'dash': 'dash'},
+                                 ))
+    
+    full_fig.update_xaxes(title = 'N-tile')
+    full_fig.update_yaxes(title = 'Response')
+    
+    full_fig.update_layout(legend=dict(yanchor="top", y=0.95, xanchor="right", x=0.95),
+                           legend_font_size=9, 
+                           width=550, height=550,
+                           title =  main_title)
+    
+    full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+    
+    return full_fig
+    
+def cumulative_response_plot(true_y, predicted_proba,
+                              title = "Cumulative Response Curve"):
+    
+    """
+    Generates the Cumulative Response Curve figure (plotly oject) from labels and probabilities 
+    
+    Plot is constituted by: 
+    - linecharts of the Cumulative Response curve, 
+    - a dashed line (representing the percentage of positives in the whole set) 
+    
+    Parameters
+    ---------- 
+    true_y: array-like, shape (n_samples)
+        True labels 
+    predicted_proba: array-like of floats of dimension (n_samples)
+        predicted probabilities for target class
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    title: str, default="Response Curve"
+        The main title of the plot.
+        
+    Returns
+    ----------   
+    full_fig: plotly figure
+    """
+    
+    main_title = f"<b>{title}</b>"
+
+    true_y = np.array(true_y)
+    predicted_proba = np.array(predicted_proba)
+
+    percentages = np.arange(start=1, stop=len(true_y) + 1)
+    percentages = percentages / float(len(true_y))
+
+    sorted_indices = np.argsort(predicted_proba)[::-1]
+    true_y = true_y[sorted_indices]
+    perc_of_tp = np.cumsum(true_y) / np.arange(start=1, stop=len(true_y) + 1)
+    
+    full_fig=go.Figure(go.Scatter(x = percentages, y = perc_of_tp,
+                                  mode='lines',
+                                  name='Cumulative Response',
+                                 ))     
+    #add baseline
+    baseline_perc = np.count_nonzero(true_y == 1) / len(true_y)
+    full_fig.add_trace(go.Scatter(x=[0, 2], y=[baseline_perc, baseline_perc],
+                                  mode='lines',
+                                  name="Baseline",
+                                  line= {'color': '#20313e', 'dash': 'dash'},
+                                 ))
+    
+    full_fig.update_xaxes(range=[0.0, 1.03],
+                          title = 'Percentage of sample')
+    full_fig.update_yaxes(range=[0.0, 1.03],
+                          title = 'Cumulative response')
+    
+    full_fig.update_layout(legend=dict(yanchor="top", y=0.95, xanchor="right", x=0.95),
+                           legend_font_size=9, 
+                           width=550, height=550,
+                           title =  main_title)
+    
+    full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
+    
+    return full_fig
+
+def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall Curve"):
+    
+    """
+    - Returns the interactive Precision-Recall curve figure (plotly oject) 
       displayng area under the PR curve value and ISO-Fbeta curves  
     - Returns the value of area under the PR curve
     
@@ -38,11 +583,10 @@ def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall C
         Determines the weight of recall in the combined f-score (used for Iso-Fbeta curves)
     title: str, default="Precision Recall Curve"
         The main title of the plot.
-    show_display_modebar: bool, default=True
-        Determines wether plotly displayModeBar will be shown
     
     Returns
     ----------   
+    full_fig: plotly object
     area_under_PR_curve: float
         value of area under the PR curve
     """
@@ -124,14 +668,13 @@ def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall C
                            width=550, height=550)
     
     full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
-    full_fig.show(config = dict(displayModeBar = show_display_modebar))
     
-    return area_under_pr_curve
+    return full_fig, area_under_pr_curve
 
-def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characteristic Curve",  show_display_modebar = True):
+def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characteristic Curve"):
     
     """
-    - Plots interactive ROC curve with plotly 
+    - Returns interactive ROC curve figure (plotly oject) 
       displayng area under the ROC curve value    
     - Returns the value of area under the ROC curve
     
@@ -148,9 +691,7 @@ def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characte
         (e.g. output from model.predict_proba(data)[:,1]) 
     title: str, default="Receiver Operating Characteristic Curve"
         The main title of the plot.
-    show_display_modebar: bool, default=True
-        Determines wether plotly displayModeBar will be shown
-
+    
     Returns
     ----------   
     area_under_ROC_curve: float
@@ -193,16 +734,14 @@ def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characte
     fig.update_xaxes(range=[-0.03, 1.0]) 
     
     fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
-
-    fig.show(config = dict(displayModeBar = show_display_modebar))
     
-    return area_under_ROC_curve
+    return full_fig, area_under_ROC_curve
 
 def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, marker_size = 3, 
-                                title = "Interactive Probabilities Violin Plot", show_display_modebar = True):
+                                title = "Interactive Probabilities Violin Plot"):
     
     """
-    Plots interactive and customized violin plots of predicted probabilties with plotly, 
+    Returns interactive and customized violin plots of predicted probabilties generated with plotly, 
     one for each true class (0, 1), 
     displayng the distribution of each "confusion class" (TN, FP, FN, TP) for the selected threshold
 
@@ -225,8 +764,10 @@ def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, 
         Size of the points to be plotted
     title: str, default='Interactive Probabilities Violin Plot'
         The main title of the plot.
-    show_display_modebar: bool, default=True
-        Determines wether plotly displayModeBar will be shown
+        
+    Returns
+    ----------   
+    full_fig: plotly figure
     """
     np.random.seed(11)
     
@@ -344,15 +885,16 @@ def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, 
             
     full_fig.update_xaxes(title_text = "True class")
     full_fig.update_yaxes(title_text = "Predicted probabilties")
-    full_fig.show(config = dict(displayModeBar = show_display_modebar))
+    
+    return full_fig
     
 def predicted_proba_density_curve_plot(true_y, predicted_proba, 
                                        threshold_step = 0.01,  
                                        curve_type = 'kde',
-                                       title = "Interactive Probabilities Density Plot", show_display_modebar = True):
+                                       title = "Interactive Probabilities Density Plot"):
     
     """
-    Plots interactive and customized density curve of predicted probabilties with plotly, 
+    Returns plotly figure object of interactive and customized density curve of predicted probabilties, 
     one for each true class (0, 1), 
     with different colours for each "confusion class" (TN, FP, FN, TP) for the selected threshold
 
@@ -376,8 +918,10 @@ def predicted_proba_density_curve_plot(true_y, predicted_proba,
         type of curve, either kernel density estimation or normal curve
     title: str, default="Interactive Probabilities Density Plot"
         The main title of the plot.
-    show_display_modebar: bool, default=True
-        Determines wether plotly displayModeBar will be shown
+        
+    Returns
+    ----------   
+    fig: plotly figure
     """
     predicted_proba = np.array(predicted_proba)
     true_y = np.array(true_y)
@@ -581,17 +1125,17 @@ def predicted_proba_density_curve_plot(true_y, predicted_proba,
                       yaxis1_title_text = 'Actual Negatives',
                       yaxis2_title_text = 'Actual Positives',
                       yaxis1_range=[0, max_y*1.1], yaxis2_range=[0, max_y*1.1])
-
-    fig.show(config = dict(displayModeBar = show_display_modebar))
+    
+    return fig
 
 def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01, 
                           amounts = None, cost_dict = None, optimize_threshold = None, 
                           N_subsets = 70, subsets_size = 0.2, with_replacement = False,
                           currency = '€', random_state = None, 
-                          title = 'Interactive Confusion Matrix', show_display_modebar = True):
+                          title = 'Interactive Confusion Matrix'):
     
     """ 
-    Plots interactive and customized confusion matrix with plotly, 
+    Returns plotly figure of interactive and customized confusion matrix, 
     one for each threshold that can be selected with a slider, 
     displaying additional information (metrics, optimized thresholds). 
     
@@ -650,10 +1194,14 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
     random_state: int, default=None
         Controls the randomness of the bootstrapping of the samples when optimizing thresholds with GHOST method
     title: str, default='Interactive Confusion Matrix'
-        The main title of the plot.
-    show_display_modebar: bool, default=True
-        Determines wether plotly displayModeBar will be shown
-    
+        The main title of the plot. 
+        
+    Returns
+    ----------   
+    fig: plotly figure
+    metrics_dep_on_threshold_df: pandas dataframe
+    constant_metrics_df: pandas dataframe
+    optimal_thresholds_df: pandas dataframe
     """
     if currency == '$': #correct dollar symbol for plotly in its HTML code
         currency = '&#36;'
@@ -695,8 +1243,14 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
     if optimize_threshold is not None:
         
         # compute optimized thresholds and create dataframe
-        optimal_thresholds_df = get_optimized_thresholds_df(optimize_threshold, threshold_values[1:-1], true_y, predicted_proba, 
-                                                            cost_dict, random_state)
+        optimal_thresholds_df = get_optimized_thresholds_df(optimize_threshold = optimize_threshold, 
+                                                            threshold_values = threshold_values[1:-1], 
+                                                            true_y = true_y, 
+                                                            predicted_proba = predicted_proba, 
+                                                            cost_dict = cost_dict, 
+                                                            N_subsets = N_subsets, subsets_size = subsets_size,
+                                                            with_replacement = with_replacement,
+                                                            random_state = random_state)
         fig.add_trace(
                 go.Table(header=dict(values=['Optimized Metric', 'Optimal Threshold']),
                          cells=dict(values=[optimal_thresholds_df['optimized_metric'], optimal_thresholds_df['optimal_threshold']])
@@ -815,16 +1369,15 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
     
     fig.update_xaxes(title_text = "Predicted")
     fig.update_yaxes(title_text = "Actual")
-    fig.show(config = dict(displayModeBar = show_display_modebar))
     
-    return metrics_dep_on_threshold_df, constant_metrics_df, optimal_thresholds_df
+    return fig, metrics_dep_on_threshold_df, constant_metrics_df, optimal_thresholds_df
 
 def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01, 
                              amounts = None, cost_dict = None, currency = '€',
-                             title = 'Interactive Confusion Line Chart', show_display_modebar = True):
+                             title = 'Interactive Confusion Line Chart'):
     
     """
-    - Plots interactive and customized line-plots with plotly, one for each "confusion class" (TN, FP, FN, TP), 
+    - Returns plotly figure of interactive and customized line-plots, one for each "confusion class" (TN, FP, FN, TP), 
       displayng amount and/or cost againts thresholds and additional information (intersection points, total cost)    
     - Returns a dataframe containing, for every threshold and depending on the inputs, 
       the amount and cost associated to each class (TN, FP, FN, TP) and the total cost
@@ -858,11 +1411,10 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
         (eg. Indian rupee: '&#8377;')
     title: str, default='Interactive Confusion Line Chart'
         The main title of the plot.
-    show_display_modebar: bool, default=True
-        Determines wether plotly displayModeBar will be shown
         
     Returns
     ----------   
+    fig: plotly figure
     amount_cost_df: pandas dataframe
         Dataframe containing variables: 
         - threshold
@@ -1174,22 +1726,21 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
     fig.update_yaxes(title_text="Amount/Cost", title_font_size=12, row=1, col=1)
     fig.update_yaxes(title_text="Amount/Cost", title_font_size=12, row=2, col=1)
 
-    fig.show(config = dict(displayModeBar = show_display_modebar))
     
     try:
         tot_amount = round(tot_amount, 2)
     except:
         tot_amount = None    
         
-    return amount_cost_df, tot_amount
+    return fig, amount_cost_df, tot_amount
 
 def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
                            amounts = None, cost_dict = None,
                            amount_classes = 'all', cost_classes = 'all', currency = '€',
-                           title = 'Interactive Amount-Cost Line Chart', show_display_modebar = True):
+                           title = 'Interactive Amount-Cost Line Chart'):
     
     """
-    - Plots an interactive and customized line-plot with plotly, 
+    - Generates an interactive and customized line-plot with plotly, 
       displayng total amount and/or total cost for user-selected "confusion classes" (TN, FP, FN, TP) againts thresholds.     
     - Returns a dataframe containing, for every threshold and depending on the inputs, 
       the amount and cost associated to each class (TN, FP, FN, TP) and the total cost
@@ -1226,11 +1777,10 @@ def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
         (eg. Indian rupee: '&#8377;')
     title: str, default='Interactive Amount-Cost Line Chart'
         The main title of the plot.
-    show_display_modebar: bool, default=True
-        Determines wether plotly displayModeBar will be shown
 
     Returns
-    ----------   
+    ----------     
+    fig: plotly figure
     amount_cost_df: pandas dataframe
         Dataframe containing variables: 
         - threshold
@@ -1355,10 +1905,8 @@ def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
     # Update axis properties
     fig.update_xaxes(title_text="Threshold")
     fig.update_yaxes(title_text="Amount/Cost")
-    
-    fig.show(config = dict(displayModeBar = show_display_modebar))
-    
-    return amount_cost_df[['threshold'] + col_lst]
+        
+    return fig, amount_cost_df[['threshold'] + col_lst]
 
 
 

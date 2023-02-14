@@ -9,6 +9,65 @@ from sklearn import metrics
 
 import plotly.figure_factory as ff 
 
+def get_gain_curve_data(true_y, predicted_proba, pos_label=None):
+    
+    """
+    Generates the points necessary to plot the Cumulative Gain and Lift curves.
+    Note: This implementation is restricted to the binary classification task.
+    
+    Parameters
+    ----------
+    true_y: array-like, shape (n_samples)
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for the class '1' of the X_data set 
+        (e.g. output from cls.predict_proba(X_data)[:,1])
+    pos_label: str or int, default=None
+        The positive class associated to full_predicted_proba[:,1].
+        By default, `np.unique(true_y)[1]` is considered as the
+        positive class
+
+    Returns
+    ----------
+    percentages: numpy.ndarray
+        An array containing the X-axis values for the Cumulative Gains chart.
+    gains: numpy.ndarray
+        An array containing the Y-axis values for the Cumulative Gains chart.
+    """
+    true_y, predicted_proba = np.asarray(true_y), np.asarray(predicted_proba)
+
+    # ensure binary classification if pos_label is not specified
+    classes = np.unique(true_y)
+    
+    if len(classes) != 2:
+        raise ValueError('Cannot calculate Curve points for data with '
+                         '{} category/ies'.format(len(classes)))
+    
+    if pos_label is not None:
+        if pos_label not in classes:
+            raise ValueError(
+                "The class provided by 'pos_label' is unknown. Got "
+                f"{pos_label} instead of one of {set(np.unique(true_y))}")
+    else:
+        pos_label = classes[1]
+
+    # make y_true a boolean vector
+    true_y = (true_y == pos_label)
+
+    sorted_indices = np.argsort(predicted_proba)[::-1]
+    true_y = true_y[sorted_indices]
+    gains = np.cumsum(true_y)
+
+    percentages = np.arange(start=1, stop=len(true_y) + 1)
+
+    gains = gains / float(np.sum(true_y))
+    percentages = percentages / float(len(true_y))
+
+    gains = np.insert(gains, 0, [0])
+    percentages = np.insert(percentages, 0, [0])
+
+    return percentages, gains
+
 def get_cost_dict(TN = 0, FP = 0, FN = 0, TP = 0):
     
     """ 
