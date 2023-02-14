@@ -586,7 +586,7 @@ def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall C
     
     Returns
     ----------   
-    full_fig: plotly object
+    full_fig: plotly figure
     area_under_PR_curve: float
         value of area under the PR curve
     """
@@ -693,7 +693,8 @@ def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characte
         The main title of the plot.
     
     Returns
-    ----------   
+    ----------  
+    fig: plotly figure
     area_under_ROC_curve: float
         value of area under the ROC curve
     """
@@ -735,7 +736,7 @@ def curve_ROC_plot(true_y, predicted_proba, title = "Receiver Operating Characte
     
     fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
     
-    return full_fig, area_under_ROC_curve
+    return fig, area_under_ROC_curve
 
 def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, marker_size = 3, 
                                 title = "Interactive Probabilities Violin Plot"):
