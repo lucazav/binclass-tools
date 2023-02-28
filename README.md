@@ -47,8 +47,8 @@ or, if you want to install the development version directly from github:
 pip install git+https://github.com/lucazav/binclass-tools
 ```
 
-### New: plot functions' behaviour
-Since version 1.0.0, the behavior of functions that generate graphs has changed: Figure (Plotly) objects (dictionary-like) will be returned and not shown directly when the function is called.  
+### New from version 1.0.0: plotting functions' behaviour
+From version 1.0.0, the behavior of functions that generate plots has changed: Figure (Plotly) objects, dictionary-like, will be returned and not shown directly when the function is called.  
 
 ### Example Usage
 
