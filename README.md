@@ -13,7 +13,7 @@ A set of Python wrappers and interactive plots that facilitate the analysis of b
 
 The __binclass-tools__ package makes the following available to you:
 
-* Powerful interactive charts that simplify the analysis of a binary classifier's performance, including any amounts and costs associated with individual observations.
+* Powerful interactive charts that simplify the analysis of a binary classifier's performance, including calibration and any amounts and costs associated with individual observations.
 
 * A set of functions that return the values of metrics useful for measuring the performance of a binary classifier, for each threshold value if dependent on it.
 
@@ -46,6 +46,9 @@ or, if you want to install the development version directly from github:
 ```
 pip install git+https://github.com/lucazav/binclass-tools
 ```
+
+### New: plot functions' behaviour
+Since version 1.0.0, the behavior of functions that generate graphs has changed: Figure (Plotly) objects (dictionary-like) will be returned and not shown directly when the function is called.  
 
 ### Example Usage
 
@@ -96,11 +99,12 @@ Note that it's possible to customize the main title and choose whether to displa
 We can start by visualizing the _Receiver Operating Characteristic (ROC) Curve_, using the following function, which also returns the value of the area under the curve:
 
 ```python
-area_under_ROC = bc.curve_ROC_plot(true_y= y_test, 
-                                   predicted_proba = test_predicted_proba)
+ROC_plot, area_under_ROC = bc.curve_ROC_plot(true_y = y_test, 
+                                             predicted_proba = test_predicted_proba)
+ROC_plot  #or ROC_plot.show(), both work 
 ```
 
-Which generates the plot:
+Which returns the plot:
 
 ![ROC Curve for the Test Set](/resources/images/01-ROC-curve-test.png)
 
@@ -118,12 +122,13 @@ An iso-Fbeta curve thus contains, by definition, all points in the precision-rec
 The function `curve_PR_plot` allows us to display ISO curves associated with F-beta score values of 0.2, 0.4, 0.6 and 0.8. The function takes as input the `beta` parameter (set to 1 as default value):
 
 ```python
-area_under_PR = bc.curve_PR_plot(true_y= y_test, 
-                                 predicted_proba = test_predicted_proba, 
-                                 beta = 1)
+PR_plot, area_under_PR = bc.curve_PR_plot(true_y = y_test, 
+                                          predicted_proba = test_predicted_proba,
+                                          beta = 1)
+PR_plot
 ```
 
-Here the output:
+Here the plot returned:
 
 ![Precision-Recall Plot with isoF1 Curves for the Test Set](/resources/images/02-PR-isoF1-plot-test.png)
 
@@ -139,12 +144,13 @@ The following binclass-tools function performs the tasks just mentioned, taking 
 ```python
 threshold_step = 0.05
 
-bc.predicted_proba_violin_plot(true_y = y_test, 
-                               predicted_proba = test_predicted_proba, 
-                               threshold_step = threshold_step)
+violin_plot = bc.predicted_proba_violin_plot(true_y = y_test, 
+                                             predicted_proba = test_predicted_proba, 
+                                             threshold_step = threshold_step)
+violin_plot                                           
 ```
 
-Here the interactive plot generated:
+Here the interactive plot returned:
 
 ![Interactive Probabilities Violin Plot for the Test Set](/resources/images/03-interactive-violin-plot-test.png)
 
@@ -154,13 +160,14 @@ Another useful tool to visualize the probabilities density is the `predicted_pro
 threshold_step = 0.05
 curve_type = 'kde' #'kde' is the default value, can also be set to 'normal'
 
-bc.predicted_proba_density_curve_plot(true_y = y_test, 
-                                      predicted_proba = test_predicted_proba, 
-                                      threshold_step = threshold_step,
-                                      curve_type = curve_type)
+density_curve_kde = bc.predicted_proba_density_curve_plot(true_y = y_test, 
+                                                          predicted_proba = test_predicted_proba, 
+                                                          threshold_step = threshold_step,
+                                                          curve_type = curve_type)
+density_curve_kde                                                          
 ```
 
-Here the interactive plot:
+Here the returned plot:
 
 ![Interactive Probabilities Density Plot for the Test Set](/resources/images/04-interactive-density-plot-test.png)
 
@@ -197,7 +204,7 @@ train_cost_dict = bc.get_cost_dict(TN = 0, FP = 10, FN = np.abs(X_train[:, 12]),
 At this point we can visualize the _Interactive Confusion Matrix_ on the training dataset, including the optimal threshold for all the available metrics:
 
 ```python
-var_metrics_df, invar_metrics_df, opt_thresh_df = bc.confusion_matrix_plot(
+cf_fig, var_metrics_df, invar_metrics_df, opt_thresh_df = bc.confusion_matrix_plot(
     true_y = y_train, 
     predicted_proba = train_predicted_proba, 
     threshold_step = threshold_step, 
@@ -208,14 +215,15 @@ var_metrics_df, invar_metrics_df, opt_thresh_df = bc.confusion_matrix_plot(
     #with_replacement = False,           # default
     currency = currency,
     random_state = 123,
-    title = 'Interactive Confusion Matrix for the Training Set');
+    title = 'Interactive Confusion Matrix for the Training Set')
+cf_fig
 ```
 
-Here the output:
+Here the figure returned:
 
 ![Interactive Confusion Matrix for the Training Set](/resources/images/05-interactive-confusion-matrix-train.png)
 
-As you can see, the interactive confusion matrix plot also returns metric dataframes that can be used in your code if needed. One is the _threshold dependent metrics dataframe_:
+As you can see, the interactive confusion matrix plot also returns metrics related dataframes that can be used in your code if needed. One is the _threshold dependent metrics dataframe_:
 
 |    |   threshold |   accuracy |   balanced_accuracy |   cohens_kappa |   f1_score |   matthews_corr_coef |   precision |   recall |
 |---:|------------:|-----------:|--------------------:|---------------:|-----------:|---------------------:|------------:|---------:|
@@ -275,7 +283,7 @@ currency = '$'
 
 test_cost_dict = bc.get_cost_dict(TN = 0, FP = 10, FN = np.abs(X_test[:, 12]), TP = 0)
 
-var_metrics_df, invar_metrics_df, __ = bc.confusion_matrix_plot(
+cf_fig_test, var_metrics_df, invar_metrics_df, __ = bc.confusion_matrix_plot(
     true_y = y_test, 
     predicted_proba = test_predicted_proba, 
     threshold_step = threshold_step, 
@@ -285,16 +293,18 @@ var_metrics_df, invar_metrics_df, __ = bc.confusion_matrix_plot(
     #N_subsets = 70, subsets_size = 0.2, # default
     #with_replacement = False,           # default
     currency = currency,
-    random_state = 123);
+    random_state = 123)
+
+cf_fig_test
 ```
 
 Evidently, the Interactive Confusion Matrix plot will not present the table of optimal threshold values for the various metrics:
 
 ![Interactive Confusion Matrix for the Test Set](/resources/images/06-interactive-confusion-matrix-test.png)
 
-As you can see from the code, this time the dataframes returned are only the first two.
+As you can see from the code, this time the dataframes returned are only two.
 
-Should you need to have only the above dataframes available without generating the interactive confusion matrix plot, there are functions available specifically for this. You can get the threshold invariant metrics dataframe as following:
+Should you need to have only the above dataframes available without generating the interactive confusion matrix plot, there are functions specifically available for this. You can get the threshold invariant metrics dataframe as follows:
 
 ```python
 invar_metrics_df = bc.utilities.get_invariant_metrics_df(true_y = y_test, 
@@ -373,25 +383,25 @@ opt_cost_threshold_value = bc.thresholds.get_cost_optimal_threshold(
     random_seed = 120)
 ```
 
-You could also be also interested in visualizing the trend of possible amounts or costs associated with each category of the confusion matrix as the threshold value changes. For this purpose there is the following function that generates an _Interactive Confusion Line Chart_:
+You could also be also interested in visualizing the trend of possible amounts or costs associated with each category of the confusion matrix as the threshold value changes. For this purpose there is the following function that returns an _Interactive Confusion Line Chart_:
 
 ```python
-amount_cost_df, total_amount = bc.confusion_linechart_plot(
+cl_fig, amount_cost_df, total_amount = bc.confusion_linechart_plot(
     true_y = y_test, 
     predicted_proba = test_predicted_proba, 
     threshold_step =  threshold_step, 
     amounts = amounts, 
     cost_dict = test_cost_dict, 
-    currency = currency);
+    currency = currency)
+cl_fig
 ```
-
-Here the output:
+Here the plot returned:
 
 ![Interactive Confusion Line Chart](/resources/images/07-interactive-confusion-line-chart.png)
 
 You can see that there are also black "diamonds" indicating the first threshold value in which there is a swap of the amount and cost curves. The curve swapping points can also be more than one.
 
-This function, in addition to generating the plot, also returns two output values: the total amount given by the sum of all categories and the dataframe of the amounts and costs for each category as the threshold changes:
+This function, in addition to the plot, returns two more outputs: the total amount given by the sum of all categories and the dataframe of the amounts and costs for each category as the threshold changes:
 
 ```python
 print(f'total amount: {currency}{total_amount}')
@@ -446,7 +456,7 @@ It may be sometimes necessary to compare the performance of what is considered a
 amount_classes = ['TP', 'FP'] 
 cost_classes = 'all'
 
-total_cost_amount_df = bc.total_amount_cost_plot(
+ac_fig, total_cost_amount_df = bc.total_amount_cost_plot(
     true_y = y_test, 
     predicted_proba = test_predicted_proba, 
     threshold_step = threshold_step,
@@ -454,7 +464,8 @@ total_cost_amount_df = bc.total_amount_cost_plot(
     cost_dict = test_cost_dict,
     amount_classes = amount_classes,
     cost_classes = cost_classes,
-    currency = currency);
+    currency = currency)
+ac_fig
 ```
 
 Here the resulting plot:
@@ -517,6 +528,147 @@ bc.get_confusion_category_observations_df(
 )
 ```
 
+#### New functions for version 1.0.0:
+To further evaluate your binary classification model, a new set of functions has been introduced, generating the following:  Cumulative Gain curve, Lift curve, Response curve, Cumulative Response curve and calibration plots. 
+Note that the functions for the Cumulative Gain and Lift curves take as input the **2-dimensional array** of predicted probabilities (with the probabilities associated to the negative class as well) and have a parameter that allows to specify the positive label to be considered (when not given, it will try to automatically detect it).
+
+Here the code for the *Cumulative Gain curve* of the previously trained classification model:
+
+```python
+cumgain_plot = bc.cumulative_gain_plot(true_y = y_test, 
+                                       full_predicted_proba = cls.predict_proba(X_test),
+                                       pos_label = 1,
+                                       )
+cumgain_plot
+```
+
+The function prints the information related to the label identified as positive (even if explicitly specified in the call), in this case:
+
+```
+Class 0 is associated with probabilities: full_predicted_proba[:, 0]
+Class 1 is associated with probabilities: full_predicted_proba[:, 1]
+```
+
+and returns the plot:
+
+![Cumulative-Gain plot](/resources/images/09-cumulative-gain-plot.png)
+
+The *lift_curve_plot* function code: 
+
+```python
+lift_curve = bc.lift_curve_plot(true_y = y_test, 
+                                full_predicted_proba = cls.predict_proba(X_test),
+                                pos_label = 1,
+                                )
+lift_curve
+```
+
+Which prints:
+
+```
+Class 0 is associated with probabilities: full_predicted_proba[:, 0]
+Class 1 is associated with probabilities: full_predicted_proba[:, 1]
+```
+and returns the following plot:
+
+![Lift curve plot](/resources/images/10-lift-curve-plot.png)
+
+The function that generates the *Cumulative Response curve* takes as input the true labels and the predicted probabilties for the positive class:
+
+```python
+cumres_plot = bc.cumulative_response_plot(true_y = y_test, 
+                                          predicted_proba = test_predicted_proba,
+                                          )
+cumres_plot
+```
+
+![Cumulative-Response plot](/resources/images/11-cumulative-response-plot.png)
+
+Here the code for the (non-cumulative) *Response curve* plot:
+```python
+resp_curve = bc.response_curve_plot(true_y = y_test, 
+                                    predicted_proba = test_predicted_proba,
+                                    n_tiles = 10,
+                                    )
+resp_curve
+```
+
+![Response curve plot](/resources/images/12-response-curve-plot.png)
+
+Lastly, the following two functions help to understand how well the model is calibrated. Let's recall what calibration is through an example: if a model trained to classify images as either containing or not containing a cat is presented with 10 pictures and outputs the probability of there being a cat as 0.6 (or 60%) for every image, we expect 6 cat images to be present in the set. In general terms, probabilities returned by a classification model are calibrated when a prediction of a class with confidence `p` is correct `100*p %` of the time. 
+
+The following function plots the *calibration curve* for the model against a baseline representing a perfectly calibrated model and computes the Expected Calibration Error, taking as input the true label and the predicted probabilities of the positive class. An optional parameter *show_gaps* (True by default) allows to visualize calibration errors for each bin:
+
+```python 
+calib_curve, ece = bc.calibration_curve_plot(true_y = y_test, 
+                                             predicted_proba = test_predicted_proba, 
+                                             n_bins = 10,           #default
+                                             strategy = 'uniform',  #default
+                                             show_gaps = True,      #default
+                                             ece_bins = 'fd'        #default 
+                                            )
+
+calib_curve
+```
+
+Here the returned plot:
+
+![Calibration plot](/resources/images/13-calibration-plot.png)
+
+And here the ECE:
+
+```python
+>>> ece 
+0.13359495868308954
+```
+
+This last function *calibration_plot_from_models* allows you to compare the calibration of different models by taking as input: feature dataframe (X), true labels, and one or more classification models (scikit-learn consistent, must have a predict_proba method) to compare. Optionally, a list of names for the different models can be passed as input to better identify performance in the graph.
+The function returns two figure objects and a list of Expected Calibration Errors (one for each model given): the first plot represents the calibration line chart with the ECE for each estimator and the second plot shows histograms with the predicted probability distribution (one for each given model).
+
+Let's train two more estimators first:
+
+```python
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import GaussianNB
+
+lr = LogisticRegression(C=1.0)
+gnb = GaussianNB()
+
+clf_list = [lr, gnb]
+
+for clf in clf_list:
+    clf.fit(X_train, y_train)
+```
+
+Now we can compare the different calibration plots and the probability distibutions:
+
+```python
+line_fig, hist_fig, ece_list = bc.calibration_plot_from_models(X = X_test, 
+                                                     true_y = y_test, 
+                                                     estimators = [cls, lr, gnb],
+                                                     estimator_names = ["Random Forest", "Logistic", "Naive Bayes"],
+                                                     n_bins = 10,           #default
+                                                     strategy = 'uniform',  #default
+                                                     ece_bins = 'fd'        #default
+                                                    )
+```
+
+Here the plots returned:
+
+```
+line_fig.show()
+hist_fig.show()
+```
+![Calibration plot from models](/resources/images/14-calibration-plot-from-models.png)
+
+
+And the ECEs:
+
+```python
+>>> ece_list 
+[0.13359495868308954, 0.05032756223563597, 0.053718608412928796]
+```
+
 You can find the complete code in the [sample notebook](/example-notebook/example_classification_model.ipynb) provided with the repository.
 
 ## Content
@@ -543,4 +695,3 @@ If you are interested in using _binclass-tools_ in your own code/notebooks, you'
 
 ## License
 This package is licensed under the [BSD-3-Clause](https://opensource.org/licenses/BSD-3-Clause) license.
-
