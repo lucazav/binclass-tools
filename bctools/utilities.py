@@ -9,6 +9,44 @@ from sklearn import metrics
 
 import plotly.figure_factory as ff 
 
+def get_expected_calibration_error(true_y, predicted_proba, bins = 'fd'):
+    
+    """
+    Returns the value of the Expected Calibration Error (ECE)
+    
+    Parameters
+    ----------
+    true_y: array-like, shape (n_samples)
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for the class '1' of the X_data set 
+        (e.g. output from cls.predict_proba(X_data)[:,1])
+    bins: int or sequence of scalars or str, default='fd' (Freedman-Diaconis)
+        If bins is an int, it defines the number of equal-width bins in the given range.
+        If bins is a sequence, it defines a monotonically increasing array of bin edges, 
+        including the rightmost edge.
+        If bins is a string, it defines the method used to calculate the optimal bin width, 
+        as defined by histogram_bin_edges (default set to 'fd' for Freedman-Diaconis).
+    Returns
+    ----------
+    ece: float
+        value of the Expected Calibration Error (ECE)
+    """
+    
+    bin_count, bin_edges = np.histogram(predicted_proba, bins = bins)
+    n_bins = len(bin_count)
+    
+    bin_edges[0] -= 1e-8 # because left edge is not included
+    bin_id = np.digitize(predicted_proba, bin_edges, right = True) - 1
+    
+    bin_ysum = np.bincount(bin_id, weights = true_y, minlength = n_bins)
+    bin_probasum = np.bincount(bin_id, weights =predicted_proba, minlength = n_bins)
+    bin_ymean = np.divide(bin_ysum, bin_count, out = np.zeros(n_bins), where = bin_count > 0)
+    bin_probamean = np.divide(bin_probasum, bin_count, out = np.zeros(n_bins), where = bin_count > 0)
+    
+    ece = np.abs((bin_probamean - bin_ymean) * bin_count).sum() / len(predicted_proba)
+    return ece
+
 def get_gain_curve_data(true_y, predicted_proba, pos_label=None):
     
     """
