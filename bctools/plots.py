@@ -14,17 +14,20 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 
 from .utilities import _get_amount_matrix, _get_cost_matrix, _get_density_curve_data
-from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df, get_gain_curve_data
+from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df, get_gain_curve_data, get_expected_calibration_error
 
 from .thresholds import get_optimized_thresholds_df
 
 def calibration_curve_plot(true_y, predicted_proba,
                            n_bins = 10,
                            strategy = 'uniform',
+                           show_gaps = True,
+                           ece_bins = 'fd',
                            title = "Calibration Curve"):
     
     """
-    Returns calibration curve figure (plotly oject) using true labels and predicted probabilities.
+    - Returns calibration curve figure (plotly oject) using true labels and predicted probabilities
+    - Returns the value of the Expected Calibration Error (ECE)
 
     Calibration curve, also known as reliability diagram, uses inputs
     from a binary classifier and plots the average predicted probability
@@ -34,6 +37,7 @@ def calibration_curve_plot(true_y, predicted_proba,
     Plot is constituted by: 
     - a linechart of the Calibration curve, 
     - a dashed line (representing the Calibration curve of a perfectly calibrated classifier) 
+    - if show_gaps = True, the error for each bin will be shown in the hover label and with a red line
     
     Parameters
     ----------
@@ -47,26 +51,65 @@ def calibration_curve_plot(true_y, predicted_proba,
         calculating the calibration curve. A bigger number requires more
         data.
     strategy: {'uniform', 'quantile'}, default='uniform'
-        Strategy used to define the widths of the bins.
+        Strategy used to define the widths of the bins for the calibration plot.
         - 'uniform': The bins have identical widths.
         - 'quantile': The bins have the same number of samples and depend
           on predicted probabilities.
+    show_gaps: boolean, default=True
+        If True shows the gap between the average predictions and the true
+        proportion of positive samples.
+    ece_bins: int or sequence of scalars or str, default='fd' (Freedman-Diaconis)
+        Bins for ECE computation 
+        If bins is an int, it defines the number of equal-width bins in the given range.
+        If bins is a sequence, it defines a monotonically increasing array of bin edges, 
+        including the rightmost edge.
+        If bins is a string, it defines the method used to calculate the optimal bin width, 
+        as defined by histogram_bin_edges (default set to 'fd' for Freedman-Diaconis).
     title: str, default="Calibration Curve"
         The main title of the plot.
         
     Returns
     ----------   
     full_fig: plotly figure
+    ece: float
+        value of the Expected Calibration Error (ECE)
     """
+    
     main_title = f"<b>{title}</b>"
     
     prob_true, prob_predicted = calibration_curve(true_y, predicted_proba, n_bins=n_bins, strategy=strategy)
 
     curve_df = pd.DataFrame({"Mean predicted probability": prob_predicted,
                              "Fraction of positives": prob_true})
+    
+    ece = get_expected_calibration_error(true_y, predicted_proba, bins = ece_bins)
+    
+    full_fig = go.Figure()
+    if show_gaps:
+        curve_df["error_minus"] = curve_df["Fraction of positives"] - curve_df["Mean predicted probability"]
+  
+        full_fig.add_trace(go.Scatter(
+            x=curve_df["Mean predicted probability"], 
+            y=curve_df["Fraction of positives"],
+            text=curve_df["error_minus"],
+            hovertemplate = "Mean pred. proba: %{x:.4~}<br>Fract. of positives: %{y:.4~}<br>Error: %{text:.4~}<extra></extra>",
+            error_y=dict(
+                type='data',
+                value = 0,
+                arrayminus=curve_df["error_minus"],
+                color='red',
+                thickness=1,
+                width = 3
+            )
+        ))
         
-    full_fig=px.line(curve_df, x="Mean predicted probability", y="Fraction of positives",
-                     title=main_title)
+    else:
+        full_fig.add_trace(go.Scatter(
+            x=curve_df["Mean predicted probability"], 
+            y=curve_df["Fraction of positives"],
+            mode='lines',
+            hovertemplate = "Mean pred. proba: %{x:.4~}<br>Fract. of positives: %{y:.4~}<extra></extra>",
+        ))
     
     full_fig.update_traces(name = "Calibration curve")
     
@@ -82,22 +125,28 @@ def calibration_curve_plot(true_y, predicted_proba,
     
     full_fig.update_layout(legend=dict(yanchor="bottom", y=0.05, xanchor="right", x=0.95),
                            legend_font_size=9, 
+                           legend_title_text = "ECE: " + str(round(ece, 4)),
+                           title=main_title,
+                           xaxis_title="Mean predicted probability",
+                           yaxis_title="Fraction of positives",     
                            width=550, height=550)
     
     full_fig.update_layout(margin=dict(l=40, r=40, t=40, b=40))
     
-    return full_fig
+    return full_fig, ece
     
 def calibration_plot_from_models(X, true_y, estimators,
                                  estimator_names = None,
                                  strategy = 'uniform',
                                  n_bins = 10, 
                                  pos_label = None,
+                                 ece_bins = 'fd',
                                  title = "Calibration Curves"):
     
     """
-    Returns calibration curves and probabilities histograms figures (plotly ojects) using true labels and estimators.
-     
+    - Returns calibration curves and probabilities histograms figures (plotly ojects) using true labels and estimators.
+    - Returns a list with the Expected Calibration Errors (ECE) for each estimator given (respecting the order of the input)
+
     Two plots will be returned. First plot is constituted by: 
     - linecharts of the Calibration curve (one for each estimator passed as input), 
     - a dashed line (representing the Calibration curve of a perfectly calibrated classifier)
@@ -130,6 +179,13 @@ def calibration_plot_from_models(X, true_y, estimators,
         - 'uniform': The bins have identical widths.
         - 'quantile': The bins have the same number of samples and depend
           on predicted probabilities.
+    ece_bins: int or sequence of scalars or str, default='fd' (Freedman-Diaconis)
+        Bins for ECE computation 
+        If bins is an int, it defines the number of equal-width bins in the given range.
+        If bins is a sequence, it defines a monotonically increasing array of bin edges, 
+        including the rightmost edge.
+        If bins is a string, it defines the method used to calculate the optimal bin width, 
+        as defined by histogram_bin_edges (default set to 'fd' for Freedman-Diaconis).
     title: str, default="Calibration Curves"
         The main title of the plot.
         
@@ -137,6 +193,8 @@ def calibration_plot_from_models(X, true_y, estimators,
     ----------   
     linecharts_fig: plotly figure 
     histograms_fig: plotly figure 
+    ece_list: list of float
+        list containing the Expected Calibration Errors (ECE) for the given estimators
     """
     
     if isinstance(estimators, (list, tuple)):
@@ -167,7 +225,8 @@ def calibration_plot_from_models(X, true_y, estimators,
         raise ValueError("'estimator_names' should be a string or a list/tuple of strings of same lenght of estimators.")
                 
     n_estimators = len(estimators)
-    n_hist_rows = math.ceil(n_estimators/2) 
+    n_hist_rows = math.ceil(n_estimators/2)
+    ece_list = []
         
     main_title = f"<b>{title}</b>"
     
@@ -206,11 +265,14 @@ def calibration_plot_from_models(X, true_y, estimators,
             
         predicted_proba = predicted_proba[:, class_idx]
         prob_true, prob_predicted = calibration_curve(true_y, predicted_proba, n_bins=n_bins, strategy=strategy)
+        ece_tmp = get_expected_calibration_error(true_y, predicted_proba, bins = ece_bins)
+        ece_list.append(ece_tmp)
         
         linecharts_fig.add_trace(go.Scatter(x=prob_predicted, y=prob_true, 
                                             mode='lines',
                                             line_color = color_list[grid_pos],
-                                            name = estimator_name
+                                            name = f"{estimator_name} (ECE={ece_tmp:.4f})" ,
+                                            hovertemplate = "Mean pred. proba: %{x:.4~}<br>Fract. of positives: %{y:.4~}<extra>" + estimator_name + "</extra>",
                                            ))
         
         histograms_fig.add_trace(go.Histogram(x=predicted_proba,
@@ -234,7 +296,7 @@ def calibration_plot_from_models(X, true_y, estimators,
     histograms_fig.update_layout(font=dict(size=9))
     histograms_fig.update_layout(height=270*n_hist_rows)
     
-    return linecharts_fig, histograms_fig
+    return linecharts_fig, histograms_fig, ece_list
 
     
 def cumulative_gain_plot(true_y, full_predicted_proba,
