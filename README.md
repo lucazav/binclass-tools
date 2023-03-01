@@ -540,11 +540,9 @@ cumgain_plot = bc.cumulative_gain_plot(true_y = y_test,
                                        pos_label = 1,
                                        )
 cumgain_plot
-```
-
-The function prints the information related to the label identified as positive (even if explicitly specified in the call), in this case:
-
-```
+ ```
+ The function prints the information related to the label identified as positive (even if explicitly specified in the call), in this case:
+ ```
 Class 0 is associated with probabilities: full_predicted_proba[:, 0]
 Class 1 is associated with probabilities: full_predicted_proba[:, 1]
 ```
@@ -553,7 +551,10 @@ and returns the plot:
 
 ![Cumulative-Gain plot](/resources/images/09-cumulative-gain-plot.png)
 
-The *lift_curve_plot* function code: 
+The cumulative gains plotshows the percentage of targets reached when considering a chosen percentage of the records with the highest predicted probability of belonging to the target class, while the baseline represents the performance of a random model. In this case, we can see that by selecting the top 23 percent of the cases according to our model, we select 80 percent of the target class.
+
+The *lift_curve_plot* function plots the Lift curve, also called Index plot. This graph helps answer the question: when we apply the model, sort the records by their predicted probability, and select the best n deciles, how much better is it than using no model (or a random model)?
+Here the code for the function:
 
 ```python
 lift_curve = bc.lift_curve_plot(true_y = y_test, 
@@ -563,28 +564,22 @@ lift_curve = bc.lift_curve_plot(true_y = y_test,
 lift_curve
 ```
 
-Which prints:
+The function prints:
 
 ```
 Class 0 is associated with probabilities: full_predicted_proba[:, 0]
 Class 1 is associated with probabilities: full_predicted_proba[:, 1]
 ```
+
 and returns the following plot:
 
 ![Lift curve plot](/resources/images/10-lift-curve-plot.png)
 
-The function that generates the *Cumulative Response curve* takes as input the true labels and the predicted probabilties for the positive class:
+In this example we can see that, by selecting 44 percent of the records with the highest predicted probability, this selection contains 2.2 times the percentage of target class observations that would be obtained with a random selection. 
 
-```python
-cumres_plot = bc.cumulative_response_plot(true_y = y_test, 
-                                          predicted_proba = test_predicted_proba,
-                                          )
-cumres_plot
-```
+The *Response curve* allows to visualize the percentage of actual target class records per decile, where the first decile is associated with the 10 percent of observation with the highest predicted probability and so on. The baseline represents the percentage of target class records in the total set. 
+The function that generates *response_curve_plot* takes as input the true labels, the predicted probabilties for the positive class and the number of deciles (generally called n-tiles) we want to split out dataset into:
 
-![Cumulative-Response plot](/resources/images/11-cumulative-response-plot.png)
-
-Here the code for the (non-cumulative) *Response curve* plot:
 ```python
 resp_curve = bc.response_curve_plot(true_y = y_test, 
                                     predicted_proba = test_predicted_proba,
@@ -593,7 +588,21 @@ resp_curve = bc.response_curve_plot(true_y = y_test,
 resp_curve
 ```
 
+In the following plot we can see that when selecting the decile 2 the percentage of target class records in the selection is 65%.
+
 ![Response curve plot](/resources/images/12-response-curve-plot.png)
+
+We can also visualise the same information cumulatively through the *cumulative response plot*:
+
+```python
+cumres_plot = bc.cumulative_response_plot(true_y = y_test, 
+                                          predicted_proba = test_predicted_proba,
+                                          )
+cumres_plot
+```
+![Cumulative-Response plot](/resources/images/11-cumulative-response-plot.png)
+
+From the plot we can see that in the first 28 percent of records, ordered by predicted probabilities, 64 percent belong to the target class.
 
 Lastly, the following two functions help to understand how well the model is calibrated. Let's recall what calibration is through an example: if a model trained to classify images as either containing or not containing a cat is presented with 10 pictures and outputs the probability of there being a cat as 0.6 (or 60%) for every image, we expect 6 cat images to be present in the set. In general terms, probabilities returned by a classification model are calibrated when a prediction of a class with confidence `p` is correct `100*p %` of the time. 
 
@@ -621,6 +630,16 @@ And here the ECE:
 >>> ece 
 0.13359495868308954
 ```
+
+The expected calibration error can also be directly obtained with the following function:
+
+```python
+>>> bc.utilities.get_expected_calibration_error(true_y = y_test, 
+                                                predicted_proba = test_predicted_proba, 
+                                                bins = 'fd'           #default
+                                               )
+0.13359495868308954
+```                                         
 
 This last function *calibration_plot_from_models* allows you to compare the calibration of different models by taking as input: feature dataframe (X), true labels, and one or more classification models (scikit-learn consistent, must have a predict_proba method) to compare. Optionally, a list of names for the different models can be passed as input to better identify performance in the graph.
 The function returns two figure objects and a list of Expected Calibration Errors (one for each model given): the first plot represents the calibration line chart with the ECE for each estimator and the second plot shows histograms with the predicted probability distribution (one for each given model).
