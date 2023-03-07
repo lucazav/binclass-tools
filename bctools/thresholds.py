@@ -13,26 +13,85 @@ from sklearn.utils import resample
 from itertools import repeat
 from multiprocessing import Pool
 
-def get_optimized_thresholds_df(optimize_threshold, threshold_values, true_y, predicted_proba,
-                                cost_dict = None, 
-                                N_subsets = 70, subsets_size = 0.2, with_replacement = False,
-                                random_state = None):
+from .utilities import get_confusion_matrix_and_metrics_df, get_amount_cost_df
+
+def get_subset_optimal_thresholds_df(true_y, predicted_proba, 
+                                     threshold_values, 
+                                     cost_dict = None):
+    """ 
+    Returns a dataframe with optimal decision thresholds, for the given set of data, for the metrics: 'Kappa', 'MCC', 'f1_score', 'f2_score', 'f05_score'.
+    The threshold that maximizes the chosen metric on the given subset is chosen as optimal.
+    If cost_dict is given, also the threshold that minimizes the total cost will be returned.
+    If two or more threshold share the same maximum value for a given metric (or minimun, for 'cost'), the lowest threshold will be chosen.
+    
+    Parameters
+    ----------
+    true_y: sequence of ints (0 or 1)
+        True labels 
+    predicted_proba: sequence of floats
+        predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
+    threshold_values: list of floats 
+        List of decision thresholds to screen for classification
+    cost_dict: dict, deafult=None
+        dict containing costs associated to each class (TN, FP, FN, TP)
+        with keys "TN", "FP", "FN", "TP" 
+        and values that can be both lists (with coherent lenghts) and/or floats  
+        (output from get_cost_dict)           
+        
+    Returns
+    ----------   
+    optimal_thresholds_df: pandas dataframe
+        Dataframe containing optimal thresholds
+    """
+    
+    metrics_dep_on_threshold_df = pd.DataFrame()
+    
+    for threshold in threshold_values:
+        
+        # get confusion matrix and metrics dep. on threshold
+        _, temp_metrics_df = get_confusion_matrix_and_metrics_df(true_y, predicted_proba, 
+                                                                 threshold = threshold, normalize = None)
+        # concat to metrics_dep_on_threshold_df
+        temp_metrics_df['threshold'] = threshold
+        metrics_dep_on_threshold_df = pd.concat([metrics_dep_on_threshold_df, temp_metrics_df]) 
+
+    # pivot metrics_dep_on_threshold_df 
+    name_col = metrics_dep_on_threshold_df.columns[0]
+    value_col = metrics_dep_on_threshold_df.columns[1]
+    metrics_dep_on_threshold_df = metrics_dep_on_threshold_df.pivot(columns = name_col, values = value_col, index = 'threshold').reset_index('threshold').rename_axis(None, axis=1) 
+    
+    if cost_dict is not None:
+        cost_per_threshold_df = get_amount_cost_df(true_y, predicted_proba, threshold_values, amounts = None, cost_dict = cost_dict)
+        
+    else:
+        cost_per_threshold_df = None
+    
+    optimal_thresholds_df = _get_subset_optimal_thresholds_df(metrics_dep_on_threshold_df,
+                                                              cost_per_threshold_df)
+    return optimal_thresholds_df
+
+def get_ghost_optimal_thresholds_df(optimize_threshold, threshold_values, true_y, predicted_proba,
+                                    cost_dict = None, 
+                                    N_subsets = 70, subsets_size = 0.2, with_replacement = False,
+                                    random_state = None):
    
     """ 
     Returns a dataframe with optimal decision thresholds, for given metrics, computed with GHOST method.
     
     Parameters
     ----------
-    optimize_threshold: {'all', 'ROC', 'MCC', 'Kappa', 'Fscore', 'Cost'} 
+    optimize_threshold: {'all', 'MCC', 'Kappa', 'Fscore', 'Cost'} 
                         or list containing allowed values except 'all' 
         metrics for which thresholds will be optimized 
-        'all' is equvalent to ['ROC', 'MCC', 'Kappa', 'Fscore'] if cost_dict=None, ['ROC', 'MCC', 'Kappa', 'Fscore', 'Cost'] otherwise
-    threshold_values: list of three floats 
+        'all' is equvalent to ['MCC', 'Kappa', 'Fscore'] if cost_dict=None, ['MCC', 'Kappa', 'Fscore', 'Cost'] otherwise
+    threshold_values: list of floats 
         List of decision thresholds to screen for classification
-    true_y: sequence of ints
+    true_y: sequence of ints (0 or 1)
         True labels 
     predicted_proba: sequence of floats
         predicted probabilities for class 1
+        (e.g. output from model.predict_proba(data)[:,1]) 
     random_state: int, default=None
         Controls the randomness of the bootstrapping of the samples when optimizing thresholds with GHOST method
     
@@ -44,7 +103,7 @@ def get_optimized_thresholds_df(optimize_threshold, threshold_values, true_y, pr
     
     threshold_names_lst = []
     threshold_array = np.array([])
-    supported_metrics = ['Kappa', 'MCC', 'ROC', 'Fscore', 'Cost']
+    supported_metrics = ['Kappa', 'MCC', 'Fscore', 'Cost']
 
     if optimize_threshold == 'all':
         if cost_dict:
@@ -73,31 +132,30 @@ def get_optimized_thresholds_df(optimize_threshold, threshold_values, true_y, pr
         
         if metric_name == 'Cost':
             threshold_array = np.append(threshold_array, 
-                                        np.round(get_cost_optimal_threshold(true_y, predicted_proba,
-                                                                          threshold_values, cost_dict, 
-                                                                          N_subsets = N_subsets, subsets_size = subsets_size, 
-                                                                          with_replacement = with_replacement, 
-                                                                          random_seed = random_state),
+                                        np.round(get_ghost_optimal_cost(true_y, predicted_proba,
+                                                                        threshold_values, cost_dict, 
+                                                                        N_subsets = N_subsets, subsets_size = subsets_size, 
+                                                                        with_replacement = with_replacement, 
+                                                                        random_seed = random_state),
                                                 5))
         else:
             threshold_array = np.append(threshold_array, 
-                                        np.round(get_optimal_threshold(true_y, predicted_proba,
-                                                                     threshold_values, ThOpt_metrics = metric_name, 
-                                                                     N_subsets = N_subsets, subsets_size = subsets_size,
-                                                                     with_replacement = with_replacement, 
-                                                                     random_seed = random_state),
+                                        np.round(get_ghost_optimal_threshold(true_y, predicted_proba,
+                                                                             threshold_values, ThOpt_metrics = metric_name, 
+                                                                             N_subsets = N_subsets, subsets_size = subsets_size,
+                                                                             with_replacement = with_replacement, 
+                                                                             random_seed = random_state),
                                                  5))
         
     threshold_array = np.ravel(threshold_array)
-    optimal_thresholds_df = pd.DataFrame(zip(threshold_names_lst, threshold_array), columns = ['optimized_metric', 'optimal_threshold']) 
+    optimal_thresholds_df = pd.DataFrame(zip(threshold_names_lst, threshold_array), columns = ['optimized_metric', 'GHOST_optimal_threshold']) 
     return optimal_thresholds_df
 
-def get_optimal_threshold(labels, probs, thresholds, 
-                          ThOpt_metrics = 'Kappa', N_subsets = 70, 
-                          subsets_size = 0.2, with_replacement = False, random_seed = None):
+def get_ghost_optimal_threshold(labels, probs, thresholds, 
+                                ThOpt_metrics = 'Kappa', N_subsets = 70, 
+                                subsets_size = 0.2, with_replacement = False, random_seed = None):
 
-    """ Optimize the decision threshold based on subsets of the given set (GHOST method).
-    The threshold that maximizes the chosen metric on the subsets is chosen as optimal.
+    """ Optimize the decision threshold, for a given metric, based on subsets of the given set (GHOST method).
     
     Parameters
     ----------
@@ -108,7 +166,7 @@ def get_optimal_threshold(labels, probs, thresholds,
         (e.g. output from cls.predict_proba(data)[:,1])
     thresholds: list of floats
         List of decision thresholds to screen for classification
-    ThOpt_metrics: str {'ROC', 'MCC', 'Kappa', 'Fscore'}, default='Kappa'
+    ThOpt_metrics: str {'MCC', 'Kappa', 'Fscore'}, default='Kappa'
         metric for which thresholds will be optimized 
     N_subsets: int, default=70
         Number of subsets used in the optimization process
@@ -132,7 +190,7 @@ def get_optimal_threshold(labels, probs, thresholds,
         Optimal decision threshold 
     """
     
-    supported_metrics = ['Kappa', 'MCC', 'ROC', 'Fscore']
+    supported_metrics = ['Kappa', 'MCC', 'Fscore']
     
     if ThOpt_metrics not in supported_metrics:
         raise ValueError(f"Metric {ThOpt_metrics} not supported. Supported metrics: {str(supported_metrics)}")
@@ -147,41 +205,8 @@ def get_optimal_threshold(labels, probs, thresholds,
         df_preds = pd.concat([df_preds, pd.Series([1 if x>=thresh else 0 for x in probs], name=str(thresh))], axis=1)
         
     n = max(os.cpu_count()-1, 1)
-            
-    if ThOpt_metrics == 'ROC':
-        sensitivity_accum = []
-        specificity_accum = []
-        pool = Pool(n)
-        
-        # Calculate sensitivity and specificity for a range of thresholds and N_subsets
-        for i in range(N_subsets):
-            if with_replacement:
-                if isinstance(subsets_size, float):
-                    Nsamples = int(df_preds.shape[0]*subsets_size)
-                elif isinstance(subsets_size, int):
-                    Nsamples = subsets_size                    
-                df_subset = resample(df_preds, n_samples = Nsamples, stratify=labels, random_state = random_seeds[i])
-                labels_subset = list(df_subset['labels'])
-            else:
-                df_tmp, df_subset, labels_tmp, labels_subset = train_test_split(df_preds, labels, test_size = subsets_size, 
-                                                                                stratify = labels, random_state = random_seeds[i])
-
-            result = pool.starmap(_compute_sensitivity_specificity, 
-                                  zip(repeat(labels_subset), [list(df_subset[threshold]) for threshold in thresh_names]))
-            result_array = np.array(result)
-            sensitivity_accum.append(result_array[:, 0])
-            specificity_accum.append(result_array[:, 1])
-        pool.close()
-    
-        # determine the threshold that provides the best results on the training subsets
-        median_sensitivity, std_sensitivity = _helper_calc_median_std(sensitivity_accum)
-        median_specificity, std_specificity = _helper_calc_median_std(specificity_accum)
-        roc_dist_01corner = (2*median_sensitivity*median_specificity)/(median_sensitivity+median_specificity)
-        opt_thresh = thresholds[np.argmax(roc_dist_01corner)]
-        
-        return opt_thresh
-        
-    elif ThOpt_metrics == 'Fscore':
+                   
+    if ThOpt_metrics == 'Fscore':
         recall_accum = []
         precision_accum = []
         pool = Pool(n)
@@ -243,9 +268,9 @@ def get_optimal_threshold(labels, probs, thresholds,
         
         return opt_thresh
 
-def get_cost_optimal_threshold(labels, probs, thresholds, cost_dict, 
-                               N_subsets = 70, subsets_size = 0.2, 
-                               with_replacement = False, random_seed = None):
+def get_ghost_optimal_cost(labels, probs, thresholds, cost_dict, 
+                           N_subsets = 70, subsets_size = 0.2, 
+                           with_replacement = False, random_seed = None):
 
     """ Optimize the decision threshold for minimal cost based on subsets of the given set (GHOST method).
     
@@ -322,6 +347,41 @@ def get_cost_optimal_threshold(labels, probs, thresholds, cost_dict,
 
     return opt_thresh
 
+def _get_subset_optimal_thresholds_df(metrics_dep_on_threshold_df,
+                                      cost_per_threshold_df = None):
+    
+    threshold_array = np.array([])
+    metrics_lst = ['Kappa', 'MCC', 'f1_score', 'f2_score', 'f05_score']
+        
+    metrics_dep_on_threshold_df['f2_score'] = metrics_dep_on_threshold_df.apply(_lambda_get_f2, axis = 1)
+    metrics_dep_on_threshold_df['f05_score'] = metrics_dep_on_threshold_df.apply(_lambda_get_f05, axis = 1) 
+
+    threshold_array = np.array([])
+                    
+    threshold_array = np.append(threshold_array, 
+                                np.round(metrics_dep_on_threshold_df['threshold'].iloc[metrics_dep_on_threshold_df['cohens_kappa'].argmax()], 5))
+    
+    threshold_array = np.append(threshold_array, 
+                                np.round(metrics_dep_on_threshold_df['threshold'].iloc[metrics_dep_on_threshold_df['matthews_corr_coef'].argmax()], 5))
+    
+    threshold_array = np.append(threshold_array, 
+                                np.round(metrics_dep_on_threshold_df['threshold'].iloc[metrics_dep_on_threshold_df['f1_score'].argmax()], 5))  
+    
+    threshold_array = np.append(threshold_array, 
+                                np.round(metrics_dep_on_threshold_df['threshold'].iloc[metrics_dep_on_threshold_df['f2_score'].argmax()], 5))
+    
+    threshold_array = np.append(threshold_array, 
+                                np.round(metrics_dep_on_threshold_df['threshold'].iloc[metrics_dep_on_threshold_df['f05_score'].argmax()], 5))
+    
+    if cost_per_threshold_df is not None:
+        metrics_lst.append('Cost')
+        threshold_array = np.append(threshold_array, cost_per_threshold_df['threshold'].iloc[cost_per_threshold_df['total_cost'].argmin()])
+        
+    threshold_array = np.ravel(threshold_array)
+    optimal_thresholds_df = pd.DataFrame(zip(metrics_lst, threshold_array), columns = ['metric', 'optimal_threshold']) 
+    
+    return optimal_thresholds_df
+
 def _get_metric_function(metric_name):  
     # Returns the scikit function relative to the metric_name
     if metric_name == 'Kappa':
@@ -335,19 +395,6 @@ def _MCC_wrapper(labels, preds):
         warnings.simplefilter("ignore")
         return metrics.matthews_corrcoef(labels, preds)
 
-def _precision_score_wrapper(labels, preds):
-    # Wraps scikit precision_score function with parameter zero_division = 1
-    return metrics.precision_score(labels, preds, zero_division = 1)
-
-def _recall_score_wrapper(labels, preds, pos_label=1):
-    # Wraps scikit recall_score function with parameter zero_division = 1
-    return metrics.recall_score(labels, preds, pos_label=pos_label, zero_division = 1)
-
-def _compute_sensitivity_specificity(labels, preds):
-    # Computes sensitivity (recall) and specificity through wrapped scikit functions
-    return [_recall_score_wrapper(labels, preds), 
-            _recall_score_wrapper(labels, preds, pos_label=0)]
-
 def _get_total_cost(true_y, prediction_data_df):
     # Computes total cost
     y_pred = prediction_data_df.iloc[:,0]
@@ -359,9 +406,9 @@ def _get_total_cost(true_y, prediction_data_df):
     return cost_TN + cost_FP + cost_FN + cost_TP
 
 def _compute_precision_recall(labels, preds):
-    # Computes precision and recall through wrapped scikit functions
-    return [_precision_score_wrapper(labels, preds), 
-            _recall_score_wrapper(labels, preds)]
+    # Computes precision and recall through scikit functions
+    return [metrics.precision_score(labels, preds, zero_division = 1), 
+            metrics.recall_score(labels, preds, zero_division = 1)]
 
 def _helper_calc_median_std(specificity): 
     # Calculate median and std of the columns of a pandas dataframe
@@ -370,3 +417,12 @@ def _helper_calc_median_std(specificity):
     y_values_std = np.std(arr,axis=0) 
     return y_values_median, y_values_std 
 
+def _lambda_get_f2(row):
+    precision = row['precision']
+    recall = row['recall']
+    return (5*precision*recall)/(4*precision+recall) 
+
+def _lambda_get_f05(row):
+    precision = row['precision']
+    recall = row['recall']
+    return (1.25*precision*recall)/(0.25*precision+recall)
