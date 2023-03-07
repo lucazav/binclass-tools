@@ -16,7 +16,7 @@ from plotly.subplots import make_subplots
 from .utilities import _get_amount_matrix, _get_cost_matrix, _get_density_curve_data
 from .utilities import get_amount_cost_df, get_invariant_metrics_df, get_confusion_matrix_and_metrics_df, get_gain_curve_data, get_expected_calibration_error
 
-from .thresholds import get_optimized_thresholds_df
+from .thresholds import _get_subset_optimal_thresholds_df
 
 def calibration_curve_plot(true_y, predicted_proba,
                            n_bins = 10,
@@ -657,6 +657,8 @@ def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall C
     if beta < 0:
         raise ValueError("beta should be >=0 in the F-beta score") 
 
+    true_y = np.array(true_y)  #convert to array
+    
     precision, recall, thresholds = precision_recall_curve(true_y, predicted_proba)
        
     listTr = thresholds.tolist()
@@ -668,7 +670,7 @@ def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall C
         F_beta_score = fbeta_score(true_y, y_pred, beta=beta, zero_division=0)
         listFbeta.append(F_beta_score)
         
-    listTr.append(None)
+    listTr.append('-')
     listFbeta.append(0)
     
     area_under_pr_curve = auc(recall, precision)
@@ -691,7 +693,7 @@ def curve_PR_plot(true_y, predicted_proba, beta = 1, title = "Precision Recall C
     f_scores = np.linspace(0.2, 0.8, num=4)
     
     for f_score in f_scores:
-        x = np.linspace(0.01, 1)
+        x = np.linspace(0.01, 1.01)
         y = f_score * x / (x + beta * beta * (x - f_score))
         X = x[y >= 0]
         listX = X.tolist()
@@ -842,8 +844,7 @@ def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, 
     except:
         n_of_decimals = 4
     
-    threshold_values = list(np.arange(0, 1 + threshold_step, threshold_step))
-    
+    threshold_values = list(np.round(np.arange(0, 1 + threshold_step, threshold_step), n_of_decimals))  #define thresholds list
     main_title = f"<b>{title}</b><br>"
     
     # VIOLIN PLOT 
@@ -859,7 +860,7 @@ def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, 
     # STRIP PLOT
     for threshold in threshold_values:
         
-        threshold_string = "thresh_" + str(round(threshold, n_of_decimals))
+        threshold_string = "thresh_" + str(threshold)
         
         
         conditions = [(data_df['class'] == 0) & (data_df['pred'] < threshold), 
@@ -922,7 +923,7 @@ def predicted_proba_violin_plot(true_y, predicted_proba, threshold_step = 0.01, 
                    #                           + subtitle + titles[threshold] + '</span>', 
                    #                      y = 0.965, yanchor = 'bottom')}
                   {"value": "set "}],
-            label = str(round(threshold_values[i], n_of_decimals)),
+            label = str(threshold_values[i]),
         )
             
         n_of_strip_plots = length_fig_list[i]
@@ -994,7 +995,7 @@ def predicted_proba_density_curve_plot(true_y, predicted_proba,
     except:
         n_of_decimals = 4
 
-    threshold_values = list(np.arange(0, 1+threshold_step, threshold_step)) #define thresholds array  
+    threshold_values = list(np.round(np.arange(0, 1 + threshold_step, threshold_step), n_of_decimals))  #define thresholds list
     main_title = f"<b>{title}</b><br>"
 
     # get density curve data
@@ -1155,7 +1156,7 @@ def predicted_proba_density_curve_plot(true_y, predicted_proba,
                                          y = 0.965, yanchor = 'bottom'),
                           "annotations": annotation_list}
                          ],
-                    label = str(round(threshold, n_of_decimals))
+                    label = str(threshold)
                    )
 
         step["args"][0]["visible"][j] = True     # TN density curve
@@ -1192,28 +1193,26 @@ def predicted_proba_density_curve_plot(true_y, predicted_proba,
     return fig
 
 def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01, 
-                          amounts = None, cost_dict = None, optimize_threshold = None, 
-                          N_subsets = 70, subsets_size = 0.2, with_replacement = False,
-                          currency = '€', random_state = None, 
+                          amounts = None, cost_dict = None, 
+                          currency = '€', 
                           title = 'Interactive Confusion Matrix'):
     
     """ 
     Returns plotly figure of interactive and customized confusion matrix, 
     one for each threshold that can be selected with a slider, 
-    displaying additional information (metrics, optimized thresholds). 
+    displaying additional information (metrics, optimal thresholds). 
     
     Returns three dataframes containing: 
     - metrics that depend on threshold 
     - metrics that don't depend on threshold,
-    - optimized thresholds (or empty)
+    - optimal thresholds: threshold values that, for this subset, maximize (or minimize) the related metric value 
     
     Plot is constituted by: 
     - table displaying metrics that vary based on the threshold selected:
       Accuracy, Balanced Acc., F1, Precision, Recall, MCC, Cohen's K
     - table displaying metrics that don't depend on threshold:
       ROC auc, Pecision-Recall auc, Brier score 
-    - when optimize_threshold is given:
-      table displayng thresholds optimized using GHOST method for any of the following metrics:
+    - table displayng best thresholds for the following metrics:
       Kohen's Kappa, Matthew's Correlation Coefficient, ROC, F-beta scores (beta = 1, 0.5, 2) 
       and for minimal total cost
     - confusion matrix (annotated heatmap) that varies based on the threshold selected
@@ -1237,25 +1236,10 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
         dict containing costs associated to each class (TN, FP, FN, TP)
         with keys "TN", "FP", "FN", "TP" 
         and values that can be both lists (with coherent lenghts) and/or floats  
-        (output from get_cost_dict)
-        necessary when optimizing threshold for minimal total costs
-    optimize_threshold: {'all', 'ROC', 'MCC', 'Kappa', 'Fscore', 'Cost'} 
-                        or list containing allowed values except 'all',  default=None
-        metrics for which thresholds will be optimized 
-        'all' is equvalent to ['ROC', 'MCC', 'Kappa', 'Fscore'] if cost_dict=None, ['ROC', 'MCC', 'Kappa', 'Fscore', 'Cost'] otherwise
-    N_subsets: int, default=70
-        Number of subsets used in GHOST optimization process
-    subsets_size: float or int, default=0.2
-        Size of the subsets used in GHOST optimization process. 
-        If float, represents the proportion of the dataset to include in the subsets. 
-        If integer, it represents the actual number of instances to include in the subsets. 
-    with_replacement: bool, default=False
-        If True, the subsets used in GHOST optimization process are drawn randomly with replacement, without otherwise.            
+        (output from get_cost_dict)           
     currency: str, default='€'
         currency symbol to be visualized. For unusual currencies, you can use their HTML code representation
         (eg. Indian rupee: '&#8377;')
-    random_state: int, default=None
-        Controls the randomness of the bootstrapping of the samples when optimizing thresholds with GHOST method
     title: str, default='Interactive Confusion Matrix'
         The main title of the plot. 
         
@@ -1274,7 +1258,7 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
     except:
         n_of_decimals = 4
         
-    threshold_values = list(np.arange(0, 1 + threshold_step, threshold_step)) #define thresholds array  
+    threshold_values = list(np.round(np.arange(0, 1 + threshold_step, threshold_step), n_of_decimals)) #define thresholds list  
     n_data = len(true_y)
     main_title = f"<b>{title}</b><br>"
     subtitle = "Total obs: " + '{:,}'.format(n_data)
@@ -1283,6 +1267,12 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
         amounts = list(amounts)
         tot_amount = sum(amounts)
         subtitle += "<br>Total amount: " + currency + '{:,.2f}'.format(tot_amount)
+    
+    if cost_dict is not None:
+        cost_TN = []
+        cost_FP = []
+        cost_FN = []
+        cost_TP = []
     
     # initialize annotation matrix 
     annotations_fixed = np.array([[["TN", "True Negative"], ["FP", "False Positive"]],     
@@ -1302,26 +1292,6 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
                      cells=dict(values=[constant_metrics_df['invariant_metric'], constant_metrics_df['value']])
                     ), row=1, col=2)
     
-    # create table with optimized thresholds or empty:
-    if optimize_threshold is not None:
-        
-        # compute optimized thresholds and create dataframe
-        optimal_thresholds_df = get_optimized_thresholds_df(optimize_threshold = optimize_threshold, 
-                                                            threshold_values = threshold_values[1:-1], 
-                                                            true_y = true_y, 
-                                                            predicted_proba = predicted_proba, 
-                                                            cost_dict = cost_dict, 
-                                                            N_subsets = N_subsets, subsets_size = subsets_size,
-                                                            with_replacement = with_replacement,
-                                                            random_state = random_state)
-        fig.add_trace(
-                go.Table(header=dict(values=['Optimized Metric', 'Optimal Threshold']),
-                         cells=dict(values=[optimal_thresholds_df['optimized_metric'], optimal_thresholds_df['optimal_threshold']])
-                        ), row=1, col=3)
-    else:
-        optimal_thresholds_df = None # needed for return statement
-        fig.add_trace(go.Table({}), row=1, col=3) 
-        
     # create dynamic titles dictionary (will be empty if cost is not given)
     titles = {}
 
@@ -1356,6 +1326,11 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
 
             if cost_dict:
                 cost_matrix = _get_cost_matrix(true_y, predicted_proba, threshold, cost_dict)
+                cost_TN.append(cost_matrix[0,0])
+                cost_FP.append(cost_matrix[0,1])
+                cost_FN.append(cost_matrix[1,0])
+                cost_TP.append(cost_matrix[1,1])
+                
                 total_cost = cost_matrix.sum()
                 annotations = np.dstack((annotations, cost_matrix, cost_matrix/total_cost))     # add cost matrix and perc. matrix
                 annotations_max_index += 2
@@ -1381,7 +1356,7 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
         fig.add_trace(go.Heatmap(z = matrix,
                                text = annotations,
                                texttemplate= "<b>%{text[0]}</b><br>" + template,
-                               name="threshold: " + str(round(threshold, n_of_decimals)),
+                               name="threshold: " + str(threshold),
                                hovertemplate = "<b>%{text[1]}</b><br>Count: " + template,
                                x=['False', 'True'],
                                y=['True', 'False'],
@@ -1392,15 +1367,37 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
     # pivot metrics_dep_on_threshold_df 
     name_col = metrics_dep_on_threshold_df.columns[0]
     value_col = metrics_dep_on_threshold_df.columns[1]
-    metrics_dep_on_threshold_df = metrics_dep_on_threshold_df.pivot(columns = name_col, values = value_col, index = 'threshold').reset_index('threshold').rename_axis(None, axis=1)    
+    metrics_dep_on_threshold_df = metrics_dep_on_threshold_df.pivot(columns = name_col, values = value_col, index = 'threshold').reset_index('threshold').rename_axis(None, axis=1) 
     
-    # fig.data[0] is the constant metrcis table, fig.data[1] is the optimal threshold table, always visible
-    fig.data[2].visible = True   # first variable metrics table
-    fig.data[3].visible = True   # first confusion matrix
+    # create table with optimal thresholds      
+    # compute optimal thresholds and create dataframe
+    if cost_dict is not None:
+        cost_per_threshold_df = pd.DataFrame(zip(threshold_values, 
+                                                 cost_TN, cost_FP, cost_FN, cost_TP), 
+                                                 columns = ['threshold', 
+                                                            'cost_TN', 'cost_FP', 'cost_FN', 'cost_TP']).sort_values(by='threshold')
+
+        cost_per_threshold_df['total_cost'] = cost_per_threshold_df[['cost_TN', 'cost_FP', 
+                                                                     'cost_FN', 'cost_TP']].apply(sum, axis = 1)
+        
+    else:
+        cost_per_threshold_df = None
+        
+    optimal_thresholds_df = _get_subset_optimal_thresholds_df(metrics_dep_on_threshold_df, cost_per_threshold_df)
+    
+    fig.add_trace(
+            go.Table(header=dict(values=['Metric', 'Optimal Threshold']),
+                     cells=dict(values=[optimal_thresholds_df['metric'], optimal_thresholds_df['optimal_threshold']])
+                    ), row=1, col=3) 
+        
+    # fig.data[0] is the constant metrcis table,always visible
+    fig.data[1].visible = True   # first variable metrics table
+    fig.data[2].visible = True   # first confusion matrix
+    # fig.data[-1] (last obkect) is the optimal thresholds table, always visible
     
     # create and add slider
     steps = []
-    j = 2   # skip first and second trace (invariant metric table, opt. thresholds/empty table)
+    j = 1   # skip first trace (invariant metrics table)
     
     for threshold in threshold_values:
         step = dict(method="update",
@@ -1409,13 +1406,13 @@ def confusion_matrix_plot(true_y, predicted_proba, threshold_step = 0.01,
                                               + subtitle + titles[threshold] + '</span>', 
                                          y = 0.965, yanchor = 'bottom')}
                          ],
-                    label = str(round(threshold, n_of_decimals))
+                    label = str(threshold)
                    )
         
         step["args"][0]["visible"][0] = True    # constant metric table always visible
-        step["args"][0]["visible"][1] = True    # opt. thresholds/empty table always visible
         step["args"][0]["visible"][j] = True    # threshold related confusion matrix 
         step["args"][0]["visible"][j+1] = True  # threshold related variable metrics table
+        step["args"][0]["visible"][-1] = True   # opt. thresholds/empty table always visible
         steps.append(step)
         j += 2                                  # add 2 to trace index (confusion matrix and variable metrics table)
         
@@ -1496,7 +1493,7 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
     except:
         n_of_decimals = 4
         
-    threshold_values = list(np.arange(0, 1 + threshold_step, threshold_step))
+    threshold_values = list(np.round(np.arange(0, 1 + threshold_step, threshold_step), n_of_decimals)) #define thresholds list
     middle_x = (threshold_values[0] + threshold_values[-1])/2  
     n_data = len(true_y)
     main_title = f"<b>{title}</b><br>"
@@ -1593,7 +1590,7 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
             
             if x_intersect:
                 intercepts_str = 'Swaps: '
-                intercepts_str += ", ".join(str(round(x, n_of_decimals)) for x in x_intersect)
+                intercepts_str += ", ".join(str(x) for x in x_intersect)
                 fig.add_annotation(xref="x domain",yref="y domain",x=0.5, y=1.15, showarrow=False, 
                                    text=intercepts_str, row=row_index, col=col_index)
         
@@ -1731,7 +1728,7 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
                                textposition = textposition,
                                hoverlabel = dict(bgcolor = 'rgb(68, 68, 68)'),
                                hovertemplate = '%{x:.' + str(n_of_decimals) + 'f}<extra></extra>',
-                               name = str(round(threshold, n_of_decimals)),
+                               name = str(threshold),
                                marker=dict(color=color),
                                marker_size = 8,
                                visible=False),
@@ -1758,7 +1755,7 @@ def confusion_linechart_plot(true_y, predicted_proba, threshold_step = 0.01,
                                           + subtitle + titles[threshold] + '</span>',
                                  y = 0.965, yanchor = 'bottom')}
                  ],
-            label = str(round(threshold, n_of_decimals))
+            label = str(threshold)
         )
         step["args"][0]["visible"][:static_charts_num] = [True]*static_charts_num   # line charts 
         step["args"][0]["visible"][j:j+markers_num] = [True]*markers_num            # line chart markers 
@@ -1860,7 +1857,7 @@ def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
     except:
         n_of_decimals = 4
         
-    threshold_values = list(np.arange(0, 1 + threshold_step, threshold_step)) 
+    threshold_values = list(np.round(np.arange(0, 1 + threshold_step, threshold_step), n_of_decimals))  #define thresholds list
     middle_x = (threshold_values[0] + threshold_values[-1])/2  
     
     supported_label = ["TN", "FP", "FN", "TP"]
@@ -1955,7 +1952,7 @@ def total_amount_cost_plot(true_y, predicted_proba, threshold_step = 0.01,
         
         if x_intersect:
             intercepts_str = 'Swaps at thresholds: '
-            intercepts_str += ", ".join(str(round(x, n_of_decimals)) for x in x_intersect)
+            intercepts_str += ", ".join(str(x) for x in x_intersect)
         
     fig.update_layout(title = dict(text = f"<b>{title}</b><span style='font-size: 13px;'><br>" + subtitle + \
                                    '<br>' + intercepts_str,
