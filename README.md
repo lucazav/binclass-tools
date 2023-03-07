@@ -53,7 +53,8 @@ pip install git+https://github.com/lucazav/binclass-tools
 ## New from version 1.1.0: 
 **optimal thresholds returned in the confusion matrix plot**: from version 1.1.0 the optimal thresholds dataframe will correspond to the thresholds that give the best value of the implemented metrics (or the minimal Cost) for the given set of data.
 
-The functions that implement the GHOST method to compute optimal thresholds are still available.
+The functions that implement the GHOST method to compute optimal thresholds are still available (renamed).
+For more details please check New Release description.
 
 ## Example Usage
 
