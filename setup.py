@@ -10,7 +10,7 @@ long_description = (here / "README.md").read_text(encoding="utf-8")
 setup(
     name="binclass-tools",  # 
     
-    version="1.1.0",  # Required
+    version="1.1.1",  # Required
     description="A set of tools that facilitates the analysis of binary classification problems",  # Optional
     
     long_description=long_description,  # Optional
