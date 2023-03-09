@@ -473,7 +473,7 @@ def lift_curve_plot(true_y, full_predicted_proba,
                                   line= {'color': '#20313e', 'dash': 'dash'},
                                  ))
         
-    full_fig.update_xaxes(title = 'Percentage of sample')
+    full_fig.update_xaxes(range=[0.0, 1.03], title = 'Percentage of sample')
     full_fig.update_yaxes(title = 'Lift')
     
     full_fig.update_layout(legend=dict(yanchor="top", y=0.95, xanchor="right", x=0.95),
